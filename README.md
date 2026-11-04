@@ -46,4 +46,6 @@ python -m pytest -q
 
 24 tests cover the geo math, validation rules, scoring rules and API responses. GitHub Actions runs them on every push and pull request.
 
+## License
 
+[Apache 2.0](LICENSE). Copyright 2026 Abhirup Khan.
