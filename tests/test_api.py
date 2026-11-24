@@ -1,5 +1,5 @@
 def test_health(client):
-    assert client.get("/api/health").get_json() == {"status": "ok"}
+    assert client.get("/api/health").get_json()["status"] == "ok"
 
 
 def test_list_trails(client):
@@ -58,3 +58,33 @@ def test_a_stale_database_is_not_rated_good(tmp_path):
     assert {t["rating"] for t in trails} == {"Stale"}
     assert all(t["score"] is None for t in trails)
     assert all(t["age_days"] > 365 for t in trails)
+
+
+def test_a_missing_database_explains_itself_instead_of_crashing(tmp_path):
+    from trailwatch.api import create_app
+
+    path = tmp_path / "not-built-yet.db"
+    client = create_app(str(path)).test_client()
+    for route in ("/api/health", "/api/trails", "/api/trails/T1"):
+        response = client.get(route)
+        assert response.status_code == 503, route
+        assert "python -m trailwatch.pipeline" in response.get_json()["error"]
+    assert not path.exists(), "opening the API must not leave an empty database behind"
+
+
+def test_a_database_with_no_tables_says_the_same_thing(tmp_path):
+    import sqlite3
+
+    from trailwatch.api import create_app
+
+    path = tmp_path / "empty.db"
+    sqlite3.connect(path).close()  # a real file, no schema
+    response = create_app(str(path)).test_client().get("/api/trails")
+    assert response.status_code == 503
+    assert "python -m trailwatch.pipeline" in response.get_json()["error"]
+
+
+def test_health_counts_the_trails_it_can_see(client):
+    body = client.get("/api/health").get_json()
+    assert body["status"] == "ok"
+    assert body["trails"] == 6

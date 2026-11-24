@@ -7,6 +7,10 @@ from flask import Flask, jsonify, g
 from .geo import elevation_gain_m, trail_length_km
 from .scoring import score_conditions
 
+
+class DatabaseUnavailable(RuntimeError):
+    """Raised when the database cannot be opened, so the API can say what to do about it."""
+
 PAGE = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Trailwatch</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -45,11 +49,33 @@ fetch("/api/trails").then(r => r.json()).then(trails => {
 def create_app(db_path="trailwatch.db"):
     app = Flask(__name__)
 
+    def missing_db():
+        return (
+            f"No usable database at {db_path}. "
+            f"Build one first: python -m trailwatch.pipeline data {db_path}"
+        )
+
     def db():
         if "db" not in g:
-            g.db = sqlite3.connect(db_path)
+            # mode=rw opens an existing file and refuses to invent one. The default would create
+            # an empty database on the spot, so a typo in the path produced a 500 from the first
+            # query and left a stray empty file behind, which then looked like a real database.
+            try:
+                g.db = sqlite3.connect(f"file:{db_path}?mode=rw", uri=True)
+            except sqlite3.OperationalError as exc:
+                raise DatabaseUnavailable(missing_db()) from exc
             g.db.row_factory = sqlite3.Row
         return g.db
+
+    @app.errorhandler(DatabaseUnavailable)
+    def _unavailable(exc):
+        return jsonify(error=str(exc)), 503
+
+    @app.errorhandler(sqlite3.OperationalError)
+    def _broken_db(_):
+        # The file is there but the tables are not: an empty database left by an older version,
+        # or a pipeline run that never finished.
+        return jsonify(error=missing_db()), 503
 
     @app.teardown_appcontext
     def close_db(_):
@@ -90,7 +116,9 @@ def create_app(db_path="trailwatch.db"):
 
     @app.get("/api/health")
     def health():
-        return jsonify(status="ok")
+        # A health check that cannot fail is decoration. This one reads the database.
+        trails = db().execute("SELECT COUNT(*) AS n FROM trails").fetchone()["n"]
+        return jsonify(status="ok", trails=trails)
 
     @app.get("/api/trails")
     def trails():
