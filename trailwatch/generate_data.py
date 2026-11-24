@@ -10,6 +10,8 @@ import random
 import sys
 from pathlib import Path
 
+from .clock import today as today_utc
+
 TRAILS = [
     ("T1", "Cedar Ridge Loop", 40.690, -111.700, "ST1"),
     ("T2", "Granite Basin Trail", 40.610, -111.760, "ST1"),
@@ -23,8 +25,18 @@ STATIONS = [
     ("ST2", "Alpine Pass Station", 40.59, -111.64),
     ("ST3", "High Valley Station", 40.65, -111.50),
 ]
-START = dt.date(2026, 1, 1)
 DAYS = 30
+
+
+def start_date(end=None):
+    """The first day of the generated window, which ends on `end` (today by default).
+
+    Generating a fixed window meant the committed data aged: every run of the demo was reading
+    weather from whenever these constants were written, and the map rated it as current. Ending
+    the window today keeps a freshly generated set usable, and makes the staleness of a stale one
+    visible instead of silent.
+    """
+    return (end or today_utc()) - dt.timedelta(days=DAYS - 1)
 
 
 def make_points(rng, lat, lon):
@@ -42,13 +54,14 @@ def make_points(rng, lat, lon):
     return pts
 
 
-def make_readings(rng):
+def make_readings(rng, end=None):
     rows = []
+    first = start_date(end)
     for sid, _, _, _ in STATIONS:
         offset = rng.uniform(-3, 3)
         depth = rng.uniform(20, 60)
         for d in range(DAYS):
-            day = START + dt.timedelta(days=d)
+            day = first + dt.timedelta(days=d)
             snowfall = rng.uniform(3, 25) if rng.random() < 0.3 else 0.0
             depth = max(0.0, depth + snowfall - 1.5)
             rows.append(
@@ -71,33 +84,41 @@ def apply_scenarios(rows):
 
     for r in last_days("ST2"):
         r.update(temp_c=-12.0, wind_kph=55.0, precip_mm=0.0)
-    for r, depth in zip(last_days("ST3"), (40.0, 55.0, 75.0, 95.0)):
+    for r, depth in zip(last_days("ST3"), (40.0, 55.0, 75.0, 95.0), strict=False):
         r.update(temp_c=-18.0, wind_kph=35.0, precip_mm=12.0, snow_depth_cm=depth)
     for r in last_days("ST1"):
         r.update(temp_c=-1.0, wind_kph=10.0, precip_mm=0.0)
     return rows
 
 
-def inject_bad_rows(rng, rows):
+def inject_bad_rows(rng, rows, end=None):
     rows = list(rows)
     rows[5]["temp_c"] = ""
     rows[17]["temp_c"] = 999
     rows[40]["snow_depth_cm"] = -5
     rows[62]["wind_kph"] = 400
     rows.append(dict(rows[10]))  # exact duplicate of an earlier row
-    rows.append({"station_id": "ST9", "date": "2026-01-05", "temp_c": -3,
-                 "snow_depth_cm": 10, "wind_kph": 12, "precip_mm": 0})
+    # A reading dated after the window ends, the shape a skewed clock or a typed year produces.
+    rows.append({"station_id": "ST1", "date": (start_date(end) + dt.timedelta(days=DAYS + 10)).isoformat(),
+                 "temp_c": -2, "snow_depth_cm": 40, "wind_kph": 8, "precip_mm": 0})
+    # A reading from a station that is not in stations.csv, so the pipeline has something to
+    # reject. Dated inside the window so only the unknown station makes it invalid.
+    rows.append({"station_id": "ST9", "date": (start_date(end) + dt.timedelta(days=4)).isoformat(),
+                 "temp_c": -3, "snow_depth_cm": 10, "wind_kph": 12, "precip_mm": 0})
     return rows
 
 
 def write_csv(path, header, rows):
+    # csv's default dialect ends lines with CRLF, which is how these files came to be the only
+    # CRLF files in a repository of LF ones. It also breaks "git am" on any patch that touches
+    # them, because the mail parser strips the CR and the context stops matching.
     with open(path, "w", newline="") as f:
-        w = csv.writer(f)
+        w = csv.writer(f, lineterminator="\n")
         w.writerow(header)
         w.writerows(rows)
 
 
-def generate(out_dir="data", seed=42):
+def generate(out_dir="data", seed=42, end=None):
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     rng = random.Random(seed)
@@ -111,7 +132,7 @@ def generate(out_dir="data", seed=42):
     for tid, _, lat, lon, _ in TRAILS:
         pts += [(tid, *p) for p in make_points(rng, lat, lon)]
     write_csv(out / "trail_points.csv", ["trail_id", "seq", "lat", "lon", "elev_m"], pts)
-    readings = inject_bad_rows(rng, make_readings(rng))
+    readings = inject_bad_rows(rng, make_readings(rng, end), end)
     cols = ["station_id", "date", "temp_c", "snow_depth_cm", "wind_kph", "precip_mm"]
     write_csv(out / "readings.csv", cols, [[r[c] for c in cols] for r in readings])
     return out

@@ -1,5 +1,6 @@
 """Small geospatial helpers. Points are (lat, lon, elev_m) tuples."""
 import math
+from itertools import pairwise
 
 EARTH_KM = 6371.0088
 
@@ -13,9 +14,7 @@ def haversine_km(lat1, lon1, lat2, lon2):
 
 
 def trail_length_km(points):
-    return sum(
-        haversine_km(a[0], a[1], b[0], b[1]) for a, b in zip(points, points[1:])
-    )
+    return sum(haversine_km(a[0], a[1], b[0], b[1]) for a, b in pairwise(points))
 
 
 def elevation_gain_m(points, noise_m=2.0):
