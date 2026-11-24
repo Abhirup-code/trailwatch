@@ -1,3 +1,4 @@
+from trailwatch.clock import today as today_utc
 from trailwatch.pipeline import validate_reading
 
 OK = {"station_id": "ST1", "date": "2026-01-02", "temp_c": "-3", "snow_depth_cm": "20",
@@ -39,16 +40,15 @@ def test_pipeline_loads_and_rejects(built):
 def test_a_reading_dated_in_the_future_is_rejected():
     import datetime as dt
 
-    tomorrow = (dt.date.today() + dt.timedelta(days=1)).isoformat()
+    tomorrow = (today_utc() + dt.timedelta(days=1)).isoformat()
     row = {"station_id": "S1", "date": tomorrow, "temp_c": "0", "snow_depth_cm": "0",
            "wind_kph": "0", "precip_mm": "0"}
     assert validate_reading(row, {"S1"}) == ["date in the future"]
 
 
 def test_todays_reading_is_still_accepted():
-    import datetime as dt
 
-    row = {"station_id": "S1", "date": dt.date.today().isoformat(), "temp_c": "0",
+    row = {"station_id": "S1", "date": today_utc().isoformat(), "temp_c": "0",
            "snow_depth_cm": "0", "wind_kph": "0", "precip_mm": "0"}
     assert validate_reading(row, {"S1"}) == []
 

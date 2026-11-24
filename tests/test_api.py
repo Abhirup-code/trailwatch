@@ -1,5 +1,8 @@
 import sqlite3
 
+from trailwatch.clock import today as today_utc
+
+
 def test_health(client):
     assert client.get("/api/health").get_json()["status"] == "ok"
 
@@ -51,7 +54,7 @@ def test_a_stale_database_is_not_rated_good(tmp_path):
     from trailwatch import generate_data, pipeline
     from trailwatch.api import create_app
 
-    old = dt.date.today() - dt.timedelta(days=400)
+    old = today_utc() - dt.timedelta(days=400)
     generate_data.generate(tmp_path / "data", end=old)
     db = tmp_path / "old.db"
     pipeline.run(tmp_path / "data", db)

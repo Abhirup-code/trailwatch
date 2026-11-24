@@ -1,5 +1,6 @@
 import datetime as dt
 
+from trailwatch.clock import today as today_utc
 from trailwatch.scoring import MAX_AGE_DAYS, score_conditions
 
 TODAY = dt.date(2026, 1, 10)
@@ -69,5 +70,5 @@ def test_a_reading_with_an_unusable_date_is_no_data():
 
 
 def test_staleness_is_measured_against_the_real_today_by_default():
-    fresh = score_conditions([day(date=dt.date.today())])
+    fresh = score_conditions([day(date=today_utc())])
     assert fresh["rating"] == "Good" and fresh["age_days"] == 0

@@ -1,6 +1,8 @@
 """Rule-based conditions score. Illustrative only, not a safety or avalanche tool."""
 import datetime as dt
 
+from .clock import today as today_utc
+
 # Past this, a reading describes the weather of some other week. The score is about what the trail
 # is like now, so beyond this the honest answer is that nobody knows, not a cheerful number from
 # whenever the station last reported.
@@ -26,7 +28,7 @@ def score_conditions(recent, today=None):
                 "as_of": None, "age_days": None}
     cur = recent[0]
     as_of = _reading_date(cur)
-    age = ((today or dt.date.today()) - as_of).days if as_of else None
+    age = ((today or today_utc()) - as_of).days if as_of else None
 
     if age is None:
         return {"score": None, "rating": "No data", "reasons": ["newest reading has no usable date"],

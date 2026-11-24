@@ -10,6 +10,8 @@ import random
 import sys
 from pathlib import Path
 
+from .clock import today as today_utc
+
 TRAILS = [
     ("T1", "Cedar Ridge Loop", 40.690, -111.700, "ST1"),
     ("T2", "Granite Basin Trail", 40.610, -111.760, "ST1"),
@@ -34,7 +36,7 @@ def start_date(end=None):
     the window today keeps a freshly generated set usable, and makes the staleness of a stale one
     visible instead of silent.
     """
-    return (end or dt.date.today()) - dt.timedelta(days=DAYS - 1)
+    return (end or today_utc()) - dt.timedelta(days=DAYS - 1)
 
 
 def make_points(rng, lat, lon):
@@ -82,7 +84,7 @@ def apply_scenarios(rows):
 
     for r in last_days("ST2"):
         r.update(temp_c=-12.0, wind_kph=55.0, precip_mm=0.0)
-    for r, depth in zip(last_days("ST3"), (40.0, 55.0, 75.0, 95.0)):
+    for r, depth in zip(last_days("ST3"), (40.0, 55.0, 75.0, 95.0), strict=False):
         r.update(temp_c=-18.0, wind_kph=35.0, precip_mm=12.0, snow_depth_cm=depth)
     for r in last_days("ST1"):
         r.update(temp_c=-1.0, wind_kph=10.0, precip_mm=0.0)

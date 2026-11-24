@@ -1,0 +1,17 @@
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+# Beyond the defaults: naive datetimes (DTZ) because staleness depends on which day it is,
+# comprehension and loop clarity (C4, SIM, RUF), and import order (I).
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF", "DTZ"]
+
+[tool.ruff.lint.per-file-ignores]
+# api.py holds the map page as one HTML string. Its CSS and markup lines are long because that is
+# what minified CSS and a legend look like, and breaking them would not make either easier to read.
+"trailwatch/api.py" = ["E501"]
+
+[tool.pytest.ini_options]
+pythonpath = "."
+testpaths = ["tests"]

@@ -2,7 +2,7 @@
 import sqlite3
 import sys
 
-from flask import Flask, jsonify, g
+from flask import Flask, g, jsonify
 
 from .geo import bounding_box, elevation_gain_m, trail_length_km
 from .scoring import score_conditions

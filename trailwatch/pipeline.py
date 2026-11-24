@@ -6,6 +6,8 @@ import sqlite3
 import sys
 from pathlib import Path
 
+from .clock import today as today_utc
+
 LIMITS = {
     "temp_c": (-50, 45),
     "snow_depth_cm": (0, 1000),
@@ -44,7 +46,7 @@ def validate_reading(row, station_ids, today=None):
         # A station cannot report tomorrow's weather. A clock skewed at the source, or a typo in
         # the year, used to load as the newest reading there is, which then outranked every real
         # one in "ORDER BY date DESC" and became the current conditions.
-        if day > (today or dt.date.today()):
+        if day > (today or today_utc()):
             errors.append("date in the future")
     for field, (lo, hi) in LIMITS.items():
         v = _num(row.get(field))

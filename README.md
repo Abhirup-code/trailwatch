@@ -23,7 +23,7 @@ The generated window is the 30 days ending on the day you run it, so the committ
 
 ```
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 python -m trailwatch.generate_data data
 python -m trailwatch.pipeline data trailwatch.db
 python -m trailwatch.api trailwatch.db
@@ -43,7 +43,8 @@ Open http://127.0.0.1:5000 for the map.
 ## Tests
 
 ```
-python -m pytest -q
+python -m pytest -q --cov=trailwatch   # CI fails below 90%
+ruff check .                          # CI runs this too
 ```
 
 24 tests cover the geo math, validation rules, scoring rules and API responses. GitHub Actions runs them on every push and pull request.
