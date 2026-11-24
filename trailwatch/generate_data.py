@@ -96,6 +96,9 @@ def inject_bad_rows(rng, rows, end=None):
     rows[40]["snow_depth_cm"] = -5
     rows[62]["wind_kph"] = 400
     rows.append(dict(rows[10]))  # exact duplicate of an earlier row
+    # A reading dated after the window ends, the shape a skewed clock or a typed year produces.
+    rows.append({"station_id": "ST1", "date": (start_date(end) + dt.timedelta(days=DAYS + 10)).isoformat(),
+                 "temp_c": -2, "snow_depth_cm": 40, "wind_kph": 8, "precip_mm": 0})
     # A reading from a station that is not in stations.csv, so the pipeline has something to
     # reject. Dated inside the window so only the unknown station makes it invalid.
     rows.append({"station_id": "ST9", "date": (start_date(end) + dt.timedelta(days=4)).isoformat(),

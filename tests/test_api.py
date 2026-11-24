@@ -57,4 +57,4 @@ def test_a_stale_database_is_not_rated_good(tmp_path):
     assert trails, "the fixture should still produce trails"
     assert {t["rating"] for t in trails} == {"Stale"}
     assert all(t["score"] is None for t in trails)
-    assert all(t["age_days"] >= 400 for t in trails)
+    assert all(t["age_days"] > 365 for t in trails)

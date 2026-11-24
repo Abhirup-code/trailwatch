@@ -32,14 +32,20 @@ def _num(value):
     return None if math.isnan(v) else v
 
 
-def validate_reading(row, station_ids):
+def validate_reading(row, station_ids, today=None):
     errors = []
     if row.get("station_id") not in station_ids:
         errors.append("unknown station")
     try:
-        dt.date.fromisoformat(row.get("date", ""))
+        day = dt.date.fromisoformat(row.get("date", ""))
     except ValueError:
         errors.append("bad date")
+    else:
+        # A station cannot report tomorrow's weather. A clock skewed at the source, or a typo in
+        # the year, used to load as the newest reading there is, which then outranked every real
+        # one in "ORDER BY date DESC" and became the current conditions.
+        if day > (today or dt.date.today()):
+            errors.append("date in the future")
     for field, (lo, hi) in LIMITS.items():
         v = _num(row.get(field))
         if v is None:
