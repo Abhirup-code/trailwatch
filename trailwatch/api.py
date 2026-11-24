@@ -7,6 +7,8 @@ from flask import Flask, jsonify, g
 from .geo import elevation_gain_m, trail_length_km
 from .scoring import score_conditions
 
+RECENT_DAYS = 4  # how many of the newest readings the score looks at
+
 
 class DatabaseUnavailable(RuntimeError):
     """Raised when the database cannot be opened, so the API can say what to do about it."""
@@ -89,11 +91,38 @@ def create_app(db_path="trailwatch.db"):
             (trail_id,)).fetchall()
         return [(r["lat"], r["lon"], r["elev_m"]) for r in rows]
 
-    def summary(trail):
-        pts = points_for(trail["trail_id"])
-        recent = [dict(r) for r in db().execute(
-            "SELECT * FROM readings WHERE station_id=? ORDER BY date DESC LIMIT 4",
-            (trail["station_id"],)).fetchall()]
+    def recent_for(station_id):
+        return [dict(r) for r in db().execute(
+            "SELECT * FROM readings WHERE station_id=? ORDER BY date DESC LIMIT ?",
+            (station_id, RECENT_DAYS)).fetchall()]
+
+    def all_points():
+        """Every trail's points in one query, keyed by trail."""
+        found = {}
+        for r in db().execute("SELECT trail_id, lat, lon, elev_m FROM trail_points ORDER BY trail_id, seq"):
+            found.setdefault(r["trail_id"], []).append((r["lat"], r["lon"], r["elev_m"]))
+        return found
+
+    def all_recent():
+        """The newest RECENT_DAYS readings for every station in one query, keyed by station.
+
+        The window function does per-station ranking in SQLite rather than issuing one LIMIT
+        query per station, which is where most of the old query count came from.
+        """
+        found = {}
+        rows = db().execute(
+            "SELECT * FROM (SELECT *, ROW_NUMBER() OVER "
+            "(PARTITION BY station_id ORDER BY date DESC) AS rn FROM readings) WHERE rn <= ?",
+            (RECENT_DAYS,))
+        for r in rows:
+            row = dict(r)
+            row.pop("rn", None)
+            found.setdefault(row["station_id"], []).append(row)
+        for readings in found.values():
+            readings.sort(key=lambda r: r["date"], reverse=True)
+        return found
+
+    def summary(trail, pts, recent):
         result = score_conditions(recent)
         return {
             "trail_id": trail["trail_id"],
@@ -122,15 +151,20 @@ def create_app(db_path="trailwatch.db"):
 
     @app.get("/api/trails")
     def trails():
+        # Three queries whatever the number of trails: the trails, their points, their readings.
         rows = db().execute("SELECT * FROM trails ORDER BY trail_id").fetchall()
-        return jsonify([summary(r) for r in rows])
+        points, readings = all_points(), all_recent()
+        return jsonify([
+            summary(r, points.get(r["trail_id"], []), readings.get(r["station_id"], []))
+            for r in rows
+        ])
 
     @app.get("/api/trails/<trail_id>")
     def trail(trail_id):
         row = db().execute("SELECT * FROM trails WHERE trail_id=?", (trail_id,)).fetchone()
         if row is None:
             return jsonify(error="trail not found"), 404
-        return jsonify(summary(row))
+        return jsonify(summary(row, points_for(trail_id), recent_for(row["station_id"])))
 
     @app.get("/api/trails/<trail_id>/geojson")
     def geojson(trail_id):

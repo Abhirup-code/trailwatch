@@ -1,3 +1,5 @@
+import sqlite3
+
 def test_health(client):
     assert client.get("/api/health").get_json()["status"] == "ok"
 
@@ -88,3 +90,40 @@ def test_health_counts_the_trails_it_can_see(client):
     body = client.get("/api/health").get_json()
     assert body["status"] == "ok"
     assert body["trails"] == 6
+
+
+class CountingConnection(sqlite3.Connection):
+    """Counts the queries a request makes, so an N+1 cannot creep back in unnoticed."""
+
+    count = 0
+
+    def execute(self, *args):
+        CountingConnection.count += 1
+        return super().execute(*args)
+
+
+def count_queries(monkeypatch, client, route):
+    real = sqlite3.connect
+    monkeypatch.setattr(
+        sqlite3, "connect", lambda p, *a, **k: real(p, *a, factory=CountingConnection, **k)
+    )
+    CountingConnection.count = 0
+    client.get(route)
+    return CountingConnection.count
+
+
+def test_listing_trails_does_not_query_once_per_trail(built, monkeypatch):
+    from trailwatch.api import create_app
+
+    client = create_app(str(built[0])).test_client()
+    trails = len(create_app(str(built[0])).test_client().get("/api/trails").get_json())
+    assert trails == 6
+    queries = count_queries(monkeypatch, client, "/api/trails")
+    # Trails, their points, their readings. Not two more for every trail.
+    assert queries == 3, f"{queries} queries for {trails} trails"
+
+
+def test_one_trail_still_matches_what_the_list_says(client):
+    listed = {t["trail_id"]: t for t in client.get("/api/trails").get_json()}
+    for trail_id, from_list in listed.items():
+        assert client.get(f"/api/trails/{trail_id}").get_json() == from_list
