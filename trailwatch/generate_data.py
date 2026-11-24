@@ -109,8 +109,11 @@ def inject_bad_rows(rng, rows, end=None):
 
 
 def write_csv(path, header, rows):
+    # csv's default dialect ends lines with CRLF, which is how these files came to be the only
+    # CRLF files in a repository of LF ones. It also breaks "git am" on any patch that touches
+    # them, because the mail parser strips the CR and the context stops matching.
     with open(path, "w", newline="") as f:
-        w = csv.writer(f)
+        w = csv.writer(f, lineterminator="\n")
         w.writerow(header)
         w.writerows(rows)
 
