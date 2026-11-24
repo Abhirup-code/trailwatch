@@ -127,3 +127,39 @@ def test_one_trail_still_matches_what_the_list_says(client):
     listed = {t["trail_id"]: t for t in client.get("/api/trails").get_json()}
     for trail_id, from_list in listed.items():
         assert client.get(f"/api/trails/{trail_id}").get_json() == from_list
+
+
+def test_one_request_returns_every_trail_with_its_shape(client):
+    body = client.get("/api/trails.geojson").get_json()
+    assert body["type"] == "FeatureCollection"
+    assert len(body["features"]) == 6
+    for f in body["features"]:
+        assert f["geometry"]["type"] == "LineString"
+        assert len(f["geometry"]["coordinates"]) > 2
+        assert f["properties"]["rating"]
+        assert "as_of" in f["properties"]
+
+
+def test_the_collection_carries_a_bbox_in_geojson_order(client):
+    body = client.get("/api/trails.geojson").get_json()
+    west, south, east, north = body["bbox"]
+    assert -180 <= west < east <= 180
+    assert -90 <= south < north <= 90
+    for f in body["features"]:
+        for lon, lat, _ in f["geometry"]["coordinates"]:
+            assert west <= lon <= east and south <= lat <= north
+
+
+def test_the_collection_matches_the_list(client):
+    listed = {t["trail_id"]: t for t in client.get("/api/trails").get_json()}
+    body = client.get("/api/trails.geojson").get_json()
+    assert {f["properties"]["trail_id"] for f in body["features"]} == set(listed)
+    for f in body["features"]:
+        assert f["properties"] == listed[f["properties"]["trail_id"]]
+
+
+def test_the_map_asks_for_the_collection_once(client):
+    page = client.get("/").get_data(as_text=True)
+    assert "/api/trails.geojson" in page
+    assert "/geojson" not in page.replace("/api/trails.geojson", "")
+    assert "fitBounds" in page

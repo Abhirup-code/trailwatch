@@ -4,7 +4,7 @@ import sys
 
 from flask import Flask, jsonify, g
 
-from .geo import elevation_gain_m, trail_length_km
+from .geo import bounding_box, elevation_gain_m, trail_length_km
 from .scoring import score_conditions
 
 RECENT_DAYS = 4  # how many of the newest readings the score looks at
@@ -24,13 +24,14 @@ PAGE = """<!doctype html>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 const colors = {Good: "#2e7d32", Fair: "#ef6c00", Poor: "#c62828", Stale: "#9e9e9e", "No data": "#9e9e9e"};
-const map = L.map("map").setView([40.63, -111.62], 10);
+const map = L.map("map");
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
   {attribution: "&copy; OpenStreetMap contributors"}).addTo(map);
-fetch("/api/trails").then(r => r.json()).then(trails => {
-  trails.forEach(t => {
-    fetch("/api/trails/" + t.trail_id + "/geojson").then(r => r.json()).then(gj => {
-      const line = L.geoJSON(gj, {style: {color: colors[t.rating] || "#555", weight: 5}}).addTo(map);
+fetch("/api/trails.geojson").then(r => r.json()).then(gj => {
+  const layer = L.geoJSON(gj, {
+    style: f => ({color: colors[f.properties.rating] || "#555", weight: 5}),
+    onEachFeature: (f, line) => {
+      const t = f.properties;
       const box = document.createElement("div");
       const title = document.createElement("b"); title.textContent = t.name;
       box.appendChild(title);
@@ -42,8 +43,11 @@ fetch("/api/trails").then(r => r.json()).then(trails => {
       box.appendChild(document.createTextNode(
         t.as_of ? "reading from " + t.as_of + ", " + t.age_days + " days old" : "no readings"));
       line.bindPopup(box);
-    });
-  });
+    },
+  }).addTo(map);
+  // Frame whatever the data covers, rather than a viewpoint written for one region.
+  const b = layer.getBounds();
+  if (b.isValid()) { map.fitBounds(b, {padding: [20, 20]}); } else { map.setView([0, 0], 2); }
 });
 </script></body></html>"""
 
@@ -166,17 +170,43 @@ def create_app(db_path="trailwatch.db"):
             return jsonify(error="trail not found"), 404
         return jsonify(summary(row, points_for(trail_id), recent_for(row["station_id"])))
 
+    def feature(trail, pts, props):
+        return {
+            "type": "Feature",
+            "properties": props,
+            "geometry": {"type": "LineString",
+                         "coordinates": [[lon, lat, elev] for lat, lon, elev in pts]},
+        }
+
+    @app.get("/api/trails.geojson")
+    def trails_geojson():
+        """Every trail, its shape and its conditions, in one response.
+
+        The map used to ask for the list and then fetch each trail's geometry separately, so a
+        page load cost one request per trail. One FeatureCollection carries the lot, and its bbox
+        lets the map frame whatever region the data covers instead of a hard-coded viewpoint.
+        """
+        rows = db().execute("SELECT * FROM trails ORDER BY trail_id").fetchall()
+        points, readings = all_points(), all_recent()
+        features, every_point = [], []
+        for row in rows:
+            pts = points.get(row["trail_id"], [])
+            if not pts:
+                continue
+            every_point += pts
+            features.append(feature(row, pts, summary(row, pts, readings.get(row["station_id"], []))))
+        body = {"type": "FeatureCollection", "features": features}
+        if every_point:
+            south, west, north, east = bounding_box(every_point)
+            body["bbox"] = [west, south, east, north]  # GeoJSON order, not ours
+        return jsonify(body)
+
     @app.get("/api/trails/<trail_id>/geojson")
     def geojson(trail_id):
         pts = points_for(trail_id)
         if not pts:
             return jsonify(error="trail not found"), 404
-        return jsonify({
-            "type": "Feature",
-            "properties": {"trail_id": trail_id},
-            "geometry": {"type": "LineString",
-                         "coordinates": [[lon, lat, elev] for lat, lon, elev in pts]},
-        })
+        return jsonify(feature(None, pts, {"trail_id": trail_id}))
 
     return app
 
