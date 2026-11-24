@@ -35,10 +35,19 @@ Open http://127.0.0.1:5000 for the map.
 
 | Endpoint | Returns |
 | --- | --- |
-| `GET /api/health` | status |
-| `GET /api/trails` | all trails with length, elevation gain, score, rating, reasons |
+| `GET /api/health` | status, and the number of trails it can read |
+| `GET /api/trails` | all trails with length, elevation gain, score, rating, reasons, and the date of the reading behind them |
 | `GET /api/trails/<id>` | one trail |
+| `GET /api/trails.geojson` | every trail's line and conditions in one FeatureCollection, with a bbox |
 | `GET /api/trails/<id>/geojson` | trail line as GeoJSON |
+
+Every summary carries `as_of` and `age_days`, the date of the newest reading behind it and how old
+that is. Readings more than three days old are reported as `"rating": "Stale"` with a null score
+rather than rated, because a conditions tool that calls last winter's weather "Good" today is worse
+than one that says nothing. The map draws those trails grey.
+
+If the database has not been built, every endpoint answers 503 with the command that builds it,
+rather than a stack trace.
 
 ## Tests
 
@@ -47,7 +56,7 @@ python -m pytest -q --cov=trailwatch   # CI fails below 90%
 ruff check .                          # CI runs this too
 ```
 
-24 tests cover the geo math, validation rules, scoring rules and API responses. GitHub Actions runs them on every push and pull request.
+45 tests cover the geo math, validation rules, scoring and staleness rules, and API responses, including one that counts the queries a trail listing makes so an N+1 cannot creep back in. GitHub Actions runs ruff and the tests on every push and pull request.
 
 ## License
 
