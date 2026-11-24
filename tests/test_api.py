@@ -35,3 +35,26 @@ def test_ratings_differ_across_trails(client):
     assert ratings["T1"] == "Good" and ratings["T2"] == "Good"
     assert ratings["T3"] == "Fair" and ratings["T4"] == "Fair"
     assert ratings["T5"] == "Poor" and ratings["T6"] == "Poor"
+
+
+def test_a_trail_summary_says_when_its_reading_is_from(client):
+    trail = client.get("/api/trails").get_json()[0]
+    assert trail["as_of"] is not None
+    assert trail["age_days"] >= 0
+
+
+def test_a_stale_database_is_not_rated_good(tmp_path):
+    import datetime as dt
+
+    from trailwatch import generate_data, pipeline
+    from trailwatch.api import create_app
+
+    old = dt.date.today() - dt.timedelta(days=400)
+    generate_data.generate(tmp_path / "data", end=old)
+    db = tmp_path / "old.db"
+    pipeline.run(tmp_path / "data", db)
+    trails = create_app(str(db)).test_client().get("/api/trails").get_json()
+    assert trails, "the fixture should still produce trails"
+    assert {t["rating"] for t in trails} == {"Stale"}
+    assert all(t["score"] is None for t in trails)
+    assert all(t["age_days"] >= 400 for t in trails)

@@ -14,10 +14,10 @@ PAGE = """<!doctype html>
 <style>body{margin:0;font-family:system-ui,sans-serif}#map{height:100vh}
 .legend{position:absolute;z-index:999;top:10px;right:10px;background:#fff;padding:8px 12px;border-radius:6px;font-size:13px}</style>
 </head><body><div id="map"></div>
-<div class="legend"><b>Trailwatch</b> (synthetic data)<br>Green Good, Orange Fair, Red Poor</div>
+<div class="legend"><b>Trailwatch</b> (synthetic data)<br>Green Good, Orange Fair, Red Poor<br>Grey means the readings are too old to score</div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-const colors = {Good: "#2e7d32", Fair: "#ef6c00", Poor: "#c62828"};
+const colors = {Good: "#2e7d32", Fair: "#ef6c00", Poor: "#c62828", Stale: "#9e9e9e", "No data": "#9e9e9e"};
 const map = L.map("map").setView([40.63, -111.62], 10);
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
   {attribution: "&copy; OpenStreetMap contributors"}).addTo(map);
@@ -29,8 +29,12 @@ fetch("/api/trails").then(r => r.json()).then(trails => {
       const title = document.createElement("b"); title.textContent = t.name;
       box.appendChild(title);
       box.appendChild(document.createElement("br"));
+      const rating = t.score === null ? t.rating : t.rating + " (" + t.score + ")";
       box.appendChild(document.createTextNode(
-        t.length_km + " km, +" + t.elevation_gain_m + " m, " + t.rating + " (" + t.score + ")"));
+        t.length_km + " km, +" + t.elevation_gain_m + " m, " + rating));
+      box.appendChild(document.createElement("br"));
+      box.appendChild(document.createTextNode(
+        t.as_of ? "reading from " + t.as_of + ", " + t.age_days + " days old" : "no readings"));
       line.bindPopup(box);
     });
   });
@@ -74,6 +78,10 @@ def create_app(db_path="trailwatch.db"):
             "score": result["score"],
             "rating": result["rating"],
             "reasons": result["reasons"],
+            # When the reading is from, so a caller can see what the rating is based on rather
+            # than assuming it is current.
+            "as_of": result["as_of"],
+            "age_days": result["age_days"],
         }
 
     @app.get("/")
