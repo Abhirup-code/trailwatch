@@ -107,9 +107,7 @@ class CountingConnection(sqlite3.Connection):
 
 def count_queries(monkeypatch, client, route):
     real = sqlite3.connect
-    monkeypatch.setattr(
-        sqlite3, "connect", lambda p, *a, **k: real(p, *a, factory=CountingConnection, **k)
-    )
+    monkeypatch.setattr(sqlite3, "connect", lambda p, *a, **k: real(p, *a, factory=CountingConnection, **k))
     CountingConnection.count = 0
     client.get(route)
     return CountingConnection.count
@@ -166,3 +164,105 @@ def test_the_map_asks_for_the_collection_once(client):
     assert "/api/trails.geojson" in page
     assert "/geojson" not in page.replace("/api/trails.geojson", "")
     assert "fitBounds" in page
+
+
+def test_a_trail_whose_station_is_missing_says_so(tmp_path):
+    from trailwatch import pipeline
+    from trailwatch.api import create_app
+
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "trails.csv").write_text("trail_id,name,region,station_id\nT1,Ridge,North,NOPE\n")
+    (data / "stations.csv").write_text("station_id,name,lat,lon\nS1,Alpha,40.1,-111.1\n")
+    (data / "trail_points.csv").write_text(
+        "trail_id,seq,lat,lon,elev_m\nT1,1,40.1,-111.1,2000\nT1,2,40.2,-111.2,2100\n"
+    )
+    (data / "readings.csv").write_text("station_id,date,temp_c,snow_depth_cm,wind_kph,precip_mm\n")
+    db = tmp_path / "orphan.db"
+    pipeline.run(data, db)
+    client = create_app(str(db)).test_client()
+
+    listed = client.get("/api/trails").get_json()[0]
+    assert listed["rating"] == "No station"
+    assert listed["score"] is None
+    assert "NOPE is not in stations.csv" in listed["reasons"][0]
+    # The single-trail route and the collection agree with the list.
+    assert client.get("/api/trails/T1").get_json() == listed
+    feature = client.get("/api/trails.geojson").get_json()["features"][0]
+    assert feature["properties"]["rating"] == "No station"
+
+
+def test_a_station_that_exists_but_is_quiet_still_reads_no_data(client):
+    # "No station" is a wrong id in trails.csv. "No data" is a station that has not reported.
+    ratings = {t["rating"] for t in client.get("/api/trails").get_json()}
+    assert "No station" not in ratings
+
+
+def test_a_one_point_trail_is_left_out_of_the_collection(tmp_path):
+    from trailwatch import pipeline
+    from trailwatch.api import create_app
+
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "trails.csv").write_text("trail_id,name,region,station_id\nT1,Stub,North,S1\nT2,Real,North,S1\n")
+    (data / "stations.csv").write_text("station_id,name,lat,lon\nS1,Alpha,40.1,-111.1\n")
+    (data / "trail_points.csv").write_text(
+        "trail_id,seq,lat,lon,elev_m\nT1,1,40.1,-111.1,2000\nT2,1,40.1,-111.1,2000\nT2,2,40.2,-111.2,2100\n"
+    )
+    (data / "readings.csv").write_text("station_id,date,temp_c,snow_depth_cm,wind_kph,precip_mm\n")
+    db = tmp_path / "stub.db"
+    pipeline.run(data, db)
+    client = create_app(str(db)).test_client()
+
+    ids = [f["properties"]["trail_id"] for f in client.get("/api/trails.geojson").get_json()["features"]]
+    assert ids == ["T2"], "a one-point LineString is not valid GeoJSON"
+    # It is still listed, because the trail exists; it just has no line.
+    assert {t["trail_id"] for t in client.get("/api/trails").get_json()} == {"T1", "T2"}
+    stub = client.get("/api/trails/T1/geojson")
+    assert stub.status_code == 422
+    assert "only 1 point" in stub.get_json()["error"]
+
+
+def test_every_line_in_the_collection_has_at_least_two_points(client):
+    for f in client.get("/api/trails.geojson").get_json()["features"]:
+        assert len(f["geometry"]["coordinates"]) >= 2
+
+
+def test_stations_lists_each_one_with_its_newest_reading(client):
+    stations = client.get("/api/stations").get_json()
+    assert len(stations) == 3
+    for s in stations:
+        assert s["station_id"] and s["name"]
+        assert s["readings"] > 0
+        assert s["age_days"] >= 0
+        assert s["reporting"] is True
+
+
+def test_a_station_with_no_readings_is_not_reporting(tmp_path):
+    from trailwatch import pipeline
+    from trailwatch.api import create_app
+
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "trails.csv").write_text("trail_id,name,region,station_id\nT1,Ridge,North,S1\n")
+    (data / "stations.csv").write_text(
+        "station_id,name,lat,lon\nS1,Alpha,40.1,-111.1\nS2,Quiet,40.2,-111.2\n"
+    )
+    (data / "trail_points.csv").write_text(
+        "trail_id,seq,lat,lon,elev_m\nT1,1,40.1,-111.1,2000\nT1,2,40.2,-111.2,2100\n"
+    )
+    (data / "readings.csv").write_text("station_id,date,temp_c,snow_depth_cm,wind_kph,precip_mm\n")
+    db = tmp_path / "quiet.db"
+    pipeline.run(data, db)
+
+    stations = {s["station_id"]: s for s in create_app(str(db)).test_client().get("/api/stations").get_json()}
+    assert stations["S2"]["readings"] == 0
+    assert stations["S2"]["latest_reading"] is None
+    assert stations["S2"]["age_days"] is None
+    assert stations["S2"]["reporting"] is False
+
+
+def test_a_trail_names_the_station_its_rating_came_from(client):
+    for trail in client.get("/api/trails").get_json():
+        assert trail["station_id"]
+        assert trail["station_name"]

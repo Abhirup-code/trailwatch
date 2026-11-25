@@ -29,3 +29,14 @@ def test_elevation_gain_ignores_descent():
 
 def test_bounding_box():
     assert bounding_box([(1, 5, 0), (3, 2, 0)]) == (1, 2, 3, 5)
+
+
+def test_bounding_box_of_no_points_says_what_is_wrong():
+    import pytest
+
+    with pytest.raises(ValueError, match="at least one point"):
+        bounding_box([])
+
+
+def test_bounding_box_of_one_point_is_that_point():
+    assert bounding_box([(40.0, -111.0, 2000)]) == (40.0, -111.0, 40.0, -111.0)

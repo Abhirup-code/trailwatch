@@ -31,6 +31,9 @@ def elevation_gain_m(points, noise_m=2.0):
 
 
 def bounding_box(points):
+    """South, west, north, east. Raises on no points rather than letting min() do the complaining."""
+    if not points:
+        raise ValueError("bounding_box needs at least one point")
     lats = [p[0] for p in points]
     lons = [p[1] for p in points]
     return (min(lats), min(lons), max(lats), max(lons))
