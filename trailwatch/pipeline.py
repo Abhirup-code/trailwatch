@@ -58,7 +58,12 @@ def validate_reading(row, station_ids, today=None):
 
 
 def _read(path):
-    with open(path, newline="") as f:
+    # utf-8-sig, not the platform default. Excel and Google Sheets write a byte order mark at the
+    # start of a UTF-8 CSV, and csv.DictReader then reads the first column's name as "\ufefftrail_id",
+    # so every lookup of "trail_id" fails with a bare KeyError that names a column plainly visible
+    # in the file. Reading as utf-8-sig consumes the mark, and naming the encoding also stops the
+    # load depending on whatever locale the machine happens to have.
+    with open(path, newline="", encoding="utf-8-sig") as f:
         return list(csv.DictReader(f))
 
 

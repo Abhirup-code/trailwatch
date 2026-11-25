@@ -1,8 +1,14 @@
 from trailwatch.clock import today as today_utc
-from trailwatch.pipeline import validate_reading
+from trailwatch.pipeline import run, validate_reading
 
-OK = {"station_id": "ST1", "date": "2026-01-02", "temp_c": "-3", "snow_depth_cm": "20",
-      "wind_kph": "10", "precip_mm": "0"}
+OK = {
+    "station_id": "ST1",
+    "date": "2026-01-02",
+    "temp_c": "-3",
+    "snow_depth_cm": "20",
+    "wind_kph": "10",
+    "precip_mm": "0",
+}
 
 
 def test_valid_row_has_no_errors():
@@ -41,23 +47,41 @@ def test_a_reading_dated_in_the_future_is_rejected():
     import datetime as dt
 
     tomorrow = (today_utc() + dt.timedelta(days=1)).isoformat()
-    row = {"station_id": "S1", "date": tomorrow, "temp_c": "0", "snow_depth_cm": "0",
-           "wind_kph": "0", "precip_mm": "0"}
+    row = {
+        "station_id": "S1",
+        "date": tomorrow,
+        "temp_c": "0",
+        "snow_depth_cm": "0",
+        "wind_kph": "0",
+        "precip_mm": "0",
+    }
     assert validate_reading(row, {"S1"}) == ["date in the future"]
 
 
 def test_todays_reading_is_still_accepted():
 
-    row = {"station_id": "S1", "date": today_utc().isoformat(), "temp_c": "0",
-           "snow_depth_cm": "0", "wind_kph": "0", "precip_mm": "0"}
+    row = {
+        "station_id": "S1",
+        "date": today_utc().isoformat(),
+        "temp_c": "0",
+        "snow_depth_cm": "0",
+        "wind_kph": "0",
+        "precip_mm": "0",
+    }
     assert validate_reading(row, {"S1"}) == []
 
 
 def test_the_future_check_can_be_pinned_to_a_date():
     import datetime as dt
 
-    row = {"station_id": "S1", "date": "2026-06-02", "temp_c": "0", "snow_depth_cm": "0",
-           "wind_kph": "0", "precip_mm": "0"}
+    row = {
+        "station_id": "S1",
+        "date": "2026-06-02",
+        "temp_c": "0",
+        "snow_depth_cm": "0",
+        "wind_kph": "0",
+        "precip_mm": "0",
+    }
     assert validate_reading(row, {"S1"}, today=dt.date(2026, 6, 1)) == ["date in the future"]
     assert validate_reading(row, {"S1"}, today=dt.date(2026, 6, 2)) == []
 
@@ -79,3 +103,38 @@ def test_pyproject_declares_the_same_minimum():
 
     pyproject = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())
     assert pyproject["project"]["requires-python"] == ">=3.11"
+
+
+def _tiny_dataset(folder, trails_text):
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "trails.csv").write_text(trails_text, encoding="utf-8")
+    (folder / "stations.csv").write_text("station_id,name,lat,lon\nS1,Alpha,40.1,-111.1\n")
+    (folder / "trail_points.csv").write_text(
+        "trail_id,seq,lat,lon,elev_m\nT1,1,40.1,-111.1,2000\nT1,2,40.2,-111.2,2100\n"
+    )
+    (folder / "readings.csv").write_text("station_id,date,temp_c,snow_depth_cm,wind_kph,precip_mm\n")
+    return folder
+
+
+HEADER = "trail_id,name,region,station_id\nT1,Ridge,North,S1\n"
+
+
+def test_a_csv_saved_from_excel_loads(tmp_path):
+    # Excel writes a byte order mark, which used to turn the first column name into "﻿trail_id".
+    data = _tiny_dataset(tmp_path / "data", "﻿" + HEADER)
+    summary = run(data, tmp_path / "x.db")
+    assert summary["trails"] == 1
+
+
+def test_a_plain_utf8_csv_still_loads(tmp_path):
+    data = _tiny_dataset(tmp_path / "data", HEADER)
+    assert run(data, tmp_path / "y.db")["trails"] == 1
+
+
+def test_non_ascii_names_survive_the_load(tmp_path):
+    import sqlite3
+
+    data = _tiny_dataset(tmp_path / "data", "trail_id,name,region,station_id\nT1,Cañón Ridge,North,S1\n")
+    db = tmp_path / "z.db"
+    run(data, db)
+    assert sqlite3.connect(db).execute("SELECT name FROM trails").fetchone()[0] == "Cañón Ridge"
