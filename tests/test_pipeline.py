@@ -65,3 +65,17 @@ def test_the_future_check_can_be_pinned_to_a_date():
 def test_the_generated_data_includes_a_future_dated_row_to_reject(built):
     _, summary = built
     assert summary["readings_rejected"] >= 7
+
+
+def test_the_package_states_the_python_it_needs():
+    import trailwatch
+
+    assert trailwatch.MINIMUM_PYTHON == (3, 11)
+
+
+def test_pyproject_declares_the_same_minimum():
+    import tomllib
+    from pathlib import Path
+
+    pyproject = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())
+    assert pyproject["project"]["requires-python"] == ">=3.11"

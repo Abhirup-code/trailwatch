@@ -22,7 +22,7 @@ The generated window is the 30 days ending on the day you run it, so the committ
 ## Run it
 
 ```
-python3 -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate   # Python 3.11 or newer
 pip install -r requirements-dev.txt
 python -m trailwatch.generate_data data
 python -m trailwatch.pipeline data trailwatch.db
