@@ -196,3 +196,33 @@ def test_a_station_that_exists_but_is_quiet_still_reads_no_data(client):
     # "No station" is a wrong id in trails.csv. "No data" is a station that has not reported.
     ratings = {t["rating"] for t in client.get("/api/trails").get_json()}
     assert "No station" not in ratings
+
+
+def test_a_one_point_trail_is_left_out_of_the_collection(tmp_path):
+    from trailwatch import pipeline
+    from trailwatch.api import create_app
+
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "trails.csv").write_text("trail_id,name,region,station_id\nT1,Stub,North,S1\nT2,Real,North,S1\n")
+    (data / "stations.csv").write_text("station_id,name,lat,lon\nS1,Alpha,40.1,-111.1\n")
+    (data / "trail_points.csv").write_text(
+        "trail_id,seq,lat,lon,elev_m\nT1,1,40.1,-111.1,2000\nT2,1,40.1,-111.1,2000\nT2,2,40.2,-111.2,2100\n"
+    )
+    (data / "readings.csv").write_text("station_id,date,temp_c,snow_depth_cm,wind_kph,precip_mm\n")
+    db = tmp_path / "stub.db"
+    pipeline.run(data, db)
+    client = create_app(str(db)).test_client()
+
+    ids = [f["properties"]["trail_id"] for f in client.get("/api/trails.geojson").get_json()["features"]]
+    assert ids == ["T2"], "a one-point LineString is not valid GeoJSON"
+    # It is still listed, because the trail exists; it just has no line.
+    assert {t["trail_id"] for t in client.get("/api/trails").get_json()} == {"T1", "T2"}
+    stub = client.get("/api/trails/T1/geojson")
+    assert stub.status_code == 422
+    assert "only 1 point" in stub.get_json()["error"]
+
+
+def test_every_line_in_the_collection_has_at_least_two_points(client):
+    for f in client.get("/api/trails.geojson").get_json()["features"]:
+        assert len(f["geometry"]["coordinates"]) >= 2

@@ -8,6 +8,7 @@ from .geo import bounding_box, elevation_gain_m, trail_length_km
 from .scoring import score_conditions
 
 RECENT_DAYS = 4  # how many of the newest readings the score looks at
+MIN_TRAIL_POINTS = 2  # a GeoJSON LineString needs two positions
 
 
 class DatabaseUnavailable(RuntimeError):
@@ -220,7 +221,9 @@ def create_app(db_path="trailwatch.db"):
         features, every_point = [], []
         for row in rows:
             pts = points.get(row["trail_id"], [])
-            if not pts:
+            # A LineString needs two positions to be valid GeoJSON. One point is a trail that was
+            # loaded wrong, and emitting it produces a document strict readers reject.
+            if len(pts) < MIN_TRAIL_POINTS:
                 continue
             every_point += pts
             features.append(feature(row, pts, summary(row, pts, readings.get(row["station_id"], []))))
@@ -235,6 +238,8 @@ def create_app(db_path="trailwatch.db"):
         pts = points_for(trail_id)
         if not pts:
             return jsonify(error="trail not found"), 404
+        if len(pts) < MIN_TRAIL_POINTS:
+            return jsonify(error=f"trail {trail_id} has only {len(pts)} point, so it has no line"), 422
         return jsonify(feature(None, pts, {"trail_id": trail_id}))
 
     return app

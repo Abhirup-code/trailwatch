@@ -185,3 +185,19 @@ def test_a_trail_with_a_real_station_is_not_counted(tmp_path):
 def test_the_generated_data_has_no_orphan_trails(built):
     _, summary = built
     assert summary["trails_without_a_station"] == []
+
+
+def test_a_trail_with_one_point_is_counted(tmp_path):
+    data = _tiny_dataset(tmp_path / "data", HEADER)
+    (data / "trail_points.csv").write_text("trail_id,seq,lat,lon,elev_m\nT1,1,40.1,-111.1,2000\n")
+    assert run(data, tmp_path / "g.db")["trails_without_a_line"] == ["T1"]
+
+
+def test_a_trail_with_two_points_is_a_line(tmp_path):
+    data = _tiny_dataset(tmp_path / "data", HEADER)
+    assert run(data, tmp_path / "h.db")["trails_without_a_line"] == []
+
+
+def test_the_generated_trails_all_have_lines(built):
+    _, summary = built
+    assert summary["trails_without_a_line"] == []

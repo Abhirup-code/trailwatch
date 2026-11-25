@@ -4,6 +4,7 @@ import datetime as dt
 import math
 import sqlite3
 import sys
+from collections import Counter
 from pathlib import Path
 
 from .clock import today as today_utc
@@ -119,6 +120,10 @@ def run(data_dir="data", db_path="trailwatch.db"):
     # map, so it is loaded, but it is counted here: silently showing "no data" forever hides a
     # typo in one column behind what looks like a quiet weather station.
     orphans = sorted(t["trail_id"] for t in trails if t["station_id"] not in station_ids)
+    # One point is not a route: its length is zero, its climb is zero, and it cannot be drawn as
+    # a line. Counted for the same reason as the orphans above, so a broken export is visible.
+    counts = Counter(p["trail_id"] for p in points)
+    stubs = sorted(t["trail_id"] for t in trails if counts[t["trail_id"]] < 2)
     loaded = rejected = 0
     seen = set()
     for row in _read(data / "readings.csv"):
@@ -141,7 +146,7 @@ def run(data_dir="data", db_path="trailwatch.db"):
     con.close()
     return {"trails": len(trails), "points": len(points), "stations": len(stations),
             "readings_loaded": loaded, "readings_rejected": rejected,
-            "trails_without_a_station": orphans}
+            "trails_without_a_station": orphans, "trails_without_a_line": stubs}
 
 
 if __name__ == "__main__":
