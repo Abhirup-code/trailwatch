@@ -23,7 +23,7 @@ PAGE = """<!doctype html>
 <div class="legend"><b>Trailwatch</b> (synthetic data)<br>Green Good, Orange Fair, Red Poor<br>Grey means the readings are too old to score</div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-const colors = {Good: "#2e7d32", Fair: "#ef6c00", Poor: "#c62828", Stale: "#9e9e9e", "No data": "#9e9e9e"};
+const colors = {Good: "#2e7d32", Fair: "#ef6c00", Poor: "#c62828", Stale: "#9e9e9e", "No data": "#9e9e9e", "No station": "#9e9e9e"};
 const map = L.map("map");
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
   {attribution: "&copy; OpenStreetMap contributors"}).addTo(map);
@@ -100,6 +100,13 @@ def create_app(db_path="trailwatch.db"):
             "SELECT * FROM readings WHERE station_id=? ORDER BY date DESC LIMIT ?",
             (station_id, RECENT_DAYS)).fetchall()]
 
+    def known_trails():
+        """Trails, each marked with whether its station actually exists."""
+        return db().execute(
+            "SELECT t.*, s.station_id IS NOT NULL AS station_known "
+            "FROM trails t LEFT JOIN stations s ON s.station_id = t.station_id ORDER BY t.trail_id"
+        ).fetchall()
+
     def all_points():
         """Every trail's points in one query, keyed by trail."""
         found = {}
@@ -126,8 +133,26 @@ def create_app(db_path="trailwatch.db"):
             readings.sort(key=lambda r: r["date"], reverse=True)
         return found
 
+    def _station_missing(trail):
+        # sqlite3.Row raises IndexError for a column it does not have, and the single-trail and
+        # collection queries both select the flag, so this only guards rows built in tests.
+        try:
+            return not trail["station_known"]
+        except (IndexError, KeyError):
+            return False
+
     def summary(trail, pts, recent):
         result = score_conditions(recent)
+        # "No station" and "No data" look the same from outside and need opposite fixes: one is a
+        # wrong station id in trails.csv, the other is a station that has not reported lately.
+        if _station_missing(trail):
+            result = {
+                "score": None,
+                "rating": "No station",
+                "reasons": [f"station {trail['station_id']} is not in stations.csv"],
+                "as_of": None,
+                "age_days": None,
+            }
         return {
             "trail_id": trail["trail_id"],
             "name": trail["name"],
@@ -156,7 +181,7 @@ def create_app(db_path="trailwatch.db"):
     @app.get("/api/trails")
     def trails():
         # Three queries whatever the number of trails: the trails, their points, their readings.
-        rows = db().execute("SELECT * FROM trails ORDER BY trail_id").fetchall()
+        rows = known_trails()
         points, readings = all_points(), all_recent()
         return jsonify([
             summary(r, points.get(r["trail_id"], []), readings.get(r["station_id"], []))
@@ -165,7 +190,11 @@ def create_app(db_path="trailwatch.db"):
 
     @app.get("/api/trails/<trail_id>")
     def trail(trail_id):
-        row = db().execute("SELECT * FROM trails WHERE trail_id=?", (trail_id,)).fetchone()
+        row = db().execute(
+            "SELECT t.*, s.station_id IS NOT NULL AS station_known "
+            "FROM trails t LEFT JOIN stations s ON s.station_id = t.station_id WHERE t.trail_id=?",
+            (trail_id,),
+        ).fetchone()
         if row is None:
             return jsonify(error="trail not found"), 404
         return jsonify(summary(row, points_for(trail_id), recent_for(row["station_id"])))
@@ -186,7 +215,7 @@ def create_app(db_path="trailwatch.db"):
         page load cost one request per trail. One FeatureCollection carries the lot, and its bbox
         lets the map frame whatever region the data covers instead of a hard-coded viewpoint.
         """
-        rows = db().execute("SELECT * FROM trails ORDER BY trail_id").fetchall()
+        rows = known_trails()
         points, readings = all_points(), all_recent()
         features, every_point = [], []
         for row in rows:

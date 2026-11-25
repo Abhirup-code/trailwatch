@@ -107,9 +107,7 @@ class CountingConnection(sqlite3.Connection):
 
 def count_queries(monkeypatch, client, route):
     real = sqlite3.connect
-    monkeypatch.setattr(
-        sqlite3, "connect", lambda p, *a, **k: real(p, *a, factory=CountingConnection, **k)
-    )
+    monkeypatch.setattr(sqlite3, "connect", lambda p, *a, **k: real(p, *a, factory=CountingConnection, **k))
     CountingConnection.count = 0
     client.get(route)
     return CountingConnection.count
@@ -166,3 +164,35 @@ def test_the_map_asks_for_the_collection_once(client):
     assert "/api/trails.geojson" in page
     assert "/geojson" not in page.replace("/api/trails.geojson", "")
     assert "fitBounds" in page
+
+
+def test_a_trail_whose_station_is_missing_says_so(tmp_path):
+    from trailwatch import pipeline
+    from trailwatch.api import create_app
+
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "trails.csv").write_text("trail_id,name,region,station_id\nT1,Ridge,North,NOPE\n")
+    (data / "stations.csv").write_text("station_id,name,lat,lon\nS1,Alpha,40.1,-111.1\n")
+    (data / "trail_points.csv").write_text(
+        "trail_id,seq,lat,lon,elev_m\nT1,1,40.1,-111.1,2000\nT1,2,40.2,-111.2,2100\n"
+    )
+    (data / "readings.csv").write_text("station_id,date,temp_c,snow_depth_cm,wind_kph,precip_mm\n")
+    db = tmp_path / "orphan.db"
+    pipeline.run(data, db)
+    client = create_app(str(db)).test_client()
+
+    listed = client.get("/api/trails").get_json()[0]
+    assert listed["rating"] == "No station"
+    assert listed["score"] is None
+    assert "NOPE is not in stations.csv" in listed["reasons"][0]
+    # The single-trail route and the collection agree with the list.
+    assert client.get("/api/trails/T1").get_json() == listed
+    feature = client.get("/api/trails.geojson").get_json()["features"][0]
+    assert feature["properties"]["rating"] == "No station"
+
+
+def test_a_station_that_exists_but_is_quiet_still_reads_no_data(client):
+    # "No station" is a wrong id in trails.csv. "No data" is a station that has not reported.
+    ratings = {t["rating"] for t in client.get("/api/trails").get_json()}
+    assert "No station" not in ratings

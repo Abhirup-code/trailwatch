@@ -115,6 +115,10 @@ def run(data_dir="data", db_path="trailwatch.db"):
                     [(p["trail_id"], p["seq"], p["lat"], p["lon"], p["elev_m"]) for p in points])
 
     station_ids = {s["station_id"] for s in stations}
+    # A trail whose station is not in stations.csv can never be scored. It still belongs on the
+    # map, so it is loaded, but it is counted here: silently showing "no data" forever hides a
+    # typo in one column behind what looks like a quiet weather station.
+    orphans = sorted(t["trail_id"] for t in trails if t["station_id"] not in station_ids)
     loaded = rejected = 0
     seen = set()
     for row in _read(data / "readings.csv"):
@@ -136,7 +140,8 @@ def run(data_dir="data", db_path="trailwatch.db"):
     con.commit()
     con.close()
     return {"trails": len(trails), "points": len(points), "stations": len(stations),
-            "readings_loaded": loaded, "readings_rejected": rejected}
+            "readings_loaded": loaded, "readings_rejected": rejected,
+            "trails_without_a_station": orphans}
 
 
 if __name__ == "__main__":

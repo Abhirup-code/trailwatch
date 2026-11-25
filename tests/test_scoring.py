@@ -7,8 +7,13 @@ TODAY = dt.date(2026, 1, 10)
 
 
 def day(temp=0, snow=30, wind=10, precip=0, date=TODAY):
-    return {"date": date.isoformat(), "temp_c": temp, "snow_depth_cm": snow,
-            "wind_kph": wind, "precip_mm": precip}
+    return {
+        "date": date.isoformat(),
+        "temp_c": temp,
+        "snow_depth_cm": snow,
+        "wind_kph": wind,
+        "precip_mm": precip,
+    }
 
 
 def score(readings):

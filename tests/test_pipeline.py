@@ -170,3 +170,18 @@ def test_an_empty_file_says_it_is_empty(tmp_path):
 def test_a_complete_header_loads(tmp_path):
     data = _tiny_dataset(tmp_path / "data", HEADER)
     assert run(data, tmp_path / "d.db")["trails"] == 1
+
+
+def test_a_trail_pointing_at_no_station_is_counted(tmp_path):
+    data = _tiny_dataset(tmp_path / "data", "trail_id,name,region,station_id\nT1,Ridge,North,NOPE\n")
+    assert run(data, tmp_path / "e.db")["trails_without_a_station"] == ["T1"]
+
+
+def test_a_trail_with_a_real_station_is_not_counted(tmp_path):
+    data = _tiny_dataset(tmp_path / "data", HEADER)
+    assert run(data, tmp_path / "f.db")["trails_without_a_station"] == []
+
+
+def test_the_generated_data_has_no_orphan_trails(built):
+    _, summary = built
+    assert summary["trails_without_a_station"] == []
