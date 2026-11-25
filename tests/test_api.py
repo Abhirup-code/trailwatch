@@ -226,3 +226,43 @@ def test_a_one_point_trail_is_left_out_of_the_collection(tmp_path):
 def test_every_line_in_the_collection_has_at_least_two_points(client):
     for f in client.get("/api/trails.geojson").get_json()["features"]:
         assert len(f["geometry"]["coordinates"]) >= 2
+
+
+def test_stations_lists_each_one_with_its_newest_reading(client):
+    stations = client.get("/api/stations").get_json()
+    assert len(stations) == 3
+    for s in stations:
+        assert s["station_id"] and s["name"]
+        assert s["readings"] > 0
+        assert s["age_days"] >= 0
+        assert s["reporting"] is True
+
+
+def test_a_station_with_no_readings_is_not_reporting(tmp_path):
+    from trailwatch import pipeline
+    from trailwatch.api import create_app
+
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "trails.csv").write_text("trail_id,name,region,station_id\nT1,Ridge,North,S1\n")
+    (data / "stations.csv").write_text(
+        "station_id,name,lat,lon\nS1,Alpha,40.1,-111.1\nS2,Quiet,40.2,-111.2\n"
+    )
+    (data / "trail_points.csv").write_text(
+        "trail_id,seq,lat,lon,elev_m\nT1,1,40.1,-111.1,2000\nT1,2,40.2,-111.2,2100\n"
+    )
+    (data / "readings.csv").write_text("station_id,date,temp_c,snow_depth_cm,wind_kph,precip_mm\n")
+    db = tmp_path / "quiet.db"
+    pipeline.run(data, db)
+
+    stations = {s["station_id"]: s for s in create_app(str(db)).test_client().get("/api/stations").get_json()}
+    assert stations["S2"]["readings"] == 0
+    assert stations["S2"]["latest_reading"] is None
+    assert stations["S2"]["age_days"] is None
+    assert stations["S2"]["reporting"] is False
+
+
+def test_a_trail_names_the_station_its_rating_came_from(client):
+    for trail in client.get("/api/trails").get_json():
+        assert trail["station_id"]
+        assert trail["station_name"]

@@ -1,11 +1,13 @@
 """Flask API and a Leaflet map page."""
+import datetime as dt
 import sqlite3
 import sys
 
 from flask import Flask, g, jsonify
 
+from .clock import today as today_utc
 from .geo import bounding_box, elevation_gain_m, trail_length_km
-from .scoring import score_conditions
+from .scoring import MAX_AGE_DAYS, score_conditions
 
 RECENT_DAYS = 4  # how many of the newest readings the score looks at
 MIN_TRAIL_POINTS = 2  # a GeoJSON LineString needs two positions
@@ -104,7 +106,7 @@ def create_app(db_path="trailwatch.db"):
     def known_trails():
         """Trails, each marked with whether its station actually exists."""
         return db().execute(
-            "SELECT t.*, s.station_id IS NOT NULL AS station_known "
+            "SELECT t.*, s.name AS station_name, s.station_id IS NOT NULL AS station_known "
             "FROM trails t LEFT JOIN stations s ON s.station_id = t.station_id ORDER BY t.trail_id"
         ).fetchall()
 
@@ -134,13 +136,15 @@ def create_app(db_path="trailwatch.db"):
             readings.sort(key=lambda r: r["date"], reverse=True)
         return found
 
-    def _station_missing(trail):
-        # sqlite3.Row raises IndexError for a column it does not have, and the single-trail and
-        # collection queries both select the flag, so this only guards rows built in tests.
+    def _column(row, name, default=None):
+        # sqlite3.Row raises IndexError for a column it does not have.
         try:
-            return not trail["station_known"]
+            return row[name]
         except (IndexError, KeyError):
-            return False
+            return default
+
+    def _station_missing(trail):
+        return _column(trail, "station_known", 1) == 0
 
     def summary(trail, pts, recent):
         result = score_conditions(recent)
@@ -167,6 +171,11 @@ def create_app(db_path="trailwatch.db"):
             # than assuming it is current.
             "as_of": result["as_of"],
             "age_days": result["age_days"],
+            # Which station the rating came from. Staleness is a property of a station, not of a
+            # trail, and several trails here share one, so without this you cannot tell whether
+            # six grey trails are six problems or one.
+            "station_id": trail["station_id"],
+            "station_name": _column(trail, "station_name"),
         }
 
     @app.get("/")
@@ -192,7 +201,7 @@ def create_app(db_path="trailwatch.db"):
     @app.get("/api/trails/<trail_id>")
     def trail(trail_id):
         row = db().execute(
-            "SELECT t.*, s.station_id IS NOT NULL AS station_known "
+            "SELECT t.*, s.name AS station_name, s.station_id IS NOT NULL AS station_known "
             "FROM trails t LEFT JOIN stations s ON s.station_id = t.station_id WHERE t.trail_id=?",
             (trail_id,),
         ).fetchone()
@@ -207,6 +216,37 @@ def create_app(db_path="trailwatch.db"):
             "geometry": {"type": "LineString",
                          "coordinates": [[lon, lat, elev] for lat, lon, elev in pts]},
         }
+
+    @app.get("/api/stations")
+    def stations():
+        """Every station with its newest reading, so a quiet one can be spotted on its own.
+
+        The trail list reports staleness per trail, but staleness belongs to the station behind
+        it. One station going quiet greys out every trail that uses it, and from the trail list
+        alone that looks like several problems instead of one.
+        """
+        rows = db().execute(
+            "SELECT s.station_id, s.name, s.lat, s.lon, MAX(r.date) AS latest, "
+            "COUNT(r.date) AS readings FROM stations s "
+            "LEFT JOIN readings r ON r.station_id = s.station_id "
+            "GROUP BY s.station_id, s.name, s.lat, s.lon ORDER BY s.station_id"
+        ).fetchall()
+        now = today_utc()
+        out = []
+        for row in rows:
+            latest = row["latest"]
+            age = (now - dt.date.fromisoformat(latest)).days if latest else None
+            out.append({
+                "station_id": row["station_id"],
+                "name": row["name"],
+                "lat": row["lat"],
+                "lon": row["lon"],
+                "readings": row["readings"],
+                "latest_reading": latest,
+                "age_days": age,
+                "reporting": age is not None and age <= MAX_AGE_DAYS,
+            })
+        return jsonify(out)
 
     @app.get("/api/trails.geojson")
     def trails_geojson():
