@@ -57,14 +57,43 @@ def validate_reading(row, station_ids, today=None):
     return errors
 
 
+class DataError(Exception):
+    """A problem with the input files that no amount of row validation can work around."""
+
+
+# Checked before anything is loaded. A row-level validator cannot report a missing column
+# usefully: it sees None for every row and blames the data instead of the header.
+REQUIRED_COLUMNS = {
+    "stations.csv": ("station_id", "name", "lat", "lon"),
+    "trails.csv": ("trail_id", "name", "region", "station_id"),
+    "trail_points.csv": ("trail_id", "seq", "lat", "lon", "elev_m"),
+    "readings.csv": ("station_id", "date", "temp_c", "snow_depth_cm", "wind_kph", "precip_mm"),
+}
+
+
 def _read(path):
     # utf-8-sig, not the platform default. Excel and Google Sheets write a byte order mark at the
     # start of a UTF-8 CSV, and csv.DictReader then reads the first column's name as "\ufefftrail_id",
     # so every lookup of "trail_id" fails with a bare KeyError that names a column plainly visible
     # in the file. Reading as utf-8-sig consumes the mark, and naming the encoding also stops the
     # load depending on whatever locale the machine happens to have.
+    path = Path(path)
+    if not path.exists():
+        raise DataError(
+            f"{path} is missing. Create the sample data with: "
+            f"python -m trailwatch.generate_data {path.parent}"
+        )
     with open(path, newline="", encoding="utf-8-sig") as f:
-        return list(csv.DictReader(f))
+        reader = csv.DictReader(f)
+        rows = list(reader)
+        header = reader.fieldnames or []
+    missing = [c for c in REQUIRED_COLUMNS.get(path.name, ()) if c not in header]
+    if missing:
+        raise DataError(
+            f"{path} has no column named {', '.join(missing)}. "
+            f"Its header is: {', '.join(header) if header else '(the file is empty)'}"
+        )
+    return rows
 
 
 def run(data_dir="data", db_path="trailwatch.db"):
@@ -111,4 +140,8 @@ def run(data_dir="data", db_path="trailwatch.db"):
 
 
 if __name__ == "__main__":
-    print(run(*sys.argv[1:3]))
+    try:
+        print(run(*sys.argv[1:3]))
+    except DataError as problem:
+        print(problem, file=sys.stderr)
+        raise SystemExit(2) from None

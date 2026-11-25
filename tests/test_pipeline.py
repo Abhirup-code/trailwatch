@@ -1,3 +1,6 @@
+import pytest
+
+from trailwatch import pipeline as pipeline_mod
 from trailwatch.clock import today as today_utc
 from trailwatch.pipeline import run, validate_reading
 
@@ -138,3 +141,32 @@ def test_non_ascii_names_survive_the_load(tmp_path):
     db = tmp_path / "z.db"
     run(data, db)
     assert sqlite3.connect(db).execute("SELECT name FROM trails").fetchone()[0] == "Cañón Ridge"
+
+
+def test_a_missing_file_says_how_to_make_one(tmp_path):
+    with pytest.raises(pipeline_mod.DataError) as caught:
+        run(tmp_path / "nothing-here", tmp_path / "a.db")
+    assert "stations.csv is missing" in str(caught.value)
+    assert "trailwatch.generate_data" in str(caught.value)
+
+
+def test_a_renamed_column_is_named_with_the_header_that_was_found(tmp_path):
+    data = _tiny_dataset(tmp_path / "data", "trail,name,region,station_id\nT1,Ridge,North,S1\n")
+    with pytest.raises(pipeline_mod.DataError) as caught:
+        run(data, tmp_path / "b.db")
+    message = str(caught.value)
+    assert "no column named trail_id" in message
+    assert "Its header is: trail, name, region, station_id" in message
+
+
+def test_an_empty_file_says_it_is_empty(tmp_path):
+    data = _tiny_dataset(tmp_path / "data", HEADER)
+    (data / "readings.csv").write_text("")
+    with pytest.raises(pipeline_mod.DataError) as caught:
+        run(data, tmp_path / "c.db")
+    assert "(the file is empty)" in str(caught.value)
+
+
+def test_a_complete_header_loads(tmp_path):
+    data = _tiny_dataset(tmp_path / "data", HEADER)
+    assert run(data, tmp_path / "d.db")["trails"] == 1
