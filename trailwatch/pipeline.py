@@ -100,18 +100,30 @@ def _read(path):
 def run(data_dir="data", db_path="trailwatch.db"):
     data = Path(data_dir)
     db = Path(db_path)
+
+    # Every input is read and checked before the old database is touched. Reading second meant a
+    # typo in a header deleted a working database and then failed, leaving nothing at all, and
+    # the connection opened just before it was never closed on the way out.
+    stations = _read(data / "stations.csv")
+    trails = _read(data / "trails.csv")
+    points = _read(data / "trail_points.csv")
+    readings = _read(data / "readings.csv")
+
     if db.exists():
         db.unlink()
     con = sqlite3.connect(db)
-    con.executescript(SCHEMA)
+    try:
+        return _load(con, stations, trails, points, readings)
+    finally:
+        con.close()
 
-    stations = _read(data / "stations.csv")
+
+def _load(con, stations, trails, points, readings):
+    con.executescript(SCHEMA)
     con.executemany("INSERT INTO stations VALUES(?,?,?,?)",
                     [(s["station_id"], s["name"], s["lat"], s["lon"]) for s in stations])
-    trails = _read(data / "trails.csv")
     con.executemany("INSERT INTO trails VALUES(?,?,?,?)",
                     [(t["trail_id"], t["name"], t["region"], t["station_id"]) for t in trails])
-    points = _read(data / "trail_points.csv")
     con.executemany("INSERT INTO trail_points VALUES(?,?,?,?,?)",
                     [(p["trail_id"], p["seq"], p["lat"], p["lon"], p["elev_m"]) for p in points])
 
@@ -126,7 +138,7 @@ def run(data_dir="data", db_path="trailwatch.db"):
     stubs = sorted(t["trail_id"] for t in trails if counts[t["trail_id"]] < 2)
     loaded = rejected = 0
     seen = set()
-    for row in _read(data / "readings.csv"):
+    for row in readings:
         errors = validate_reading(row, station_ids)
         key = (row["station_id"], row["date"])
         if not errors and key in seen:
@@ -143,7 +155,6 @@ def run(data_dir="data", db_path="trailwatch.db"):
                      float(row["precip_mm"])))
         loaded += 1
     con.commit()
-    con.close()
     return {"trails": len(trails), "points": len(points), "stations": len(stations),
             "readings_loaded": loaded, "readings_rejected": rejected,
             "trails_without_a_station": orphans, "trails_without_a_line": stubs}

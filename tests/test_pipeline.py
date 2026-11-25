@@ -140,7 +140,9 @@ def test_non_ascii_names_survive_the_load(tmp_path):
     data = _tiny_dataset(tmp_path / "data", "trail_id,name,region,station_id\nT1,Cañón Ridge,North,S1\n")
     db = tmp_path / "z.db"
     run(data, db)
-    assert sqlite3.connect(db).execute("SELECT name FROM trails").fetchone()[0] == "Cañón Ridge"
+    with sqlite3.connect(db) as con:
+        assert con.execute("SELECT name FROM trails").fetchone()[0] == "Cañón Ridge"
+    con.close()
 
 
 def test_a_missing_file_says_how_to_make_one(tmp_path):
@@ -201,3 +203,24 @@ def test_a_trail_with_two_points_is_a_line(tmp_path):
 def test_the_generated_trails_all_have_lines(built):
     _, summary = built
     assert summary["trails_without_a_line"] == []
+
+
+def test_a_bad_input_leaves_the_existing_database_alone(tmp_path):
+    data = _tiny_dataset(tmp_path / "data", HEADER)
+    db = tmp_path / "keep.db"
+    assert run(data, db)["trails"] == 1
+    before = db.read_bytes()
+
+    (data / "trails.csv").write_text("trail,name,region,station_id\nT1,Ridge,North,S1\n")
+    with pytest.raises(pipeline_mod.DataError):
+        run(data, db)
+    assert db.exists(), "a typo in a header must not delete a working database"
+    assert db.read_bytes() == before
+
+
+def test_a_failed_load_leaves_no_half_built_database(tmp_path):
+    data = _tiny_dataset(tmp_path / "data", "trail,name,region,station_id\nT1,Ridge,North,S1\n")
+    db = tmp_path / "never.db"
+    with pytest.raises(pipeline_mod.DataError):
+        run(data, db)
+    assert not db.exists()
