@@ -184,9 +184,21 @@ def create_app(db_path="trailwatch.db"):
 
     @app.get("/api/health")
     def health():
-        # A health check that cannot fail is decoration. This one reads the database.
-        trails = db().execute("SELECT COUNT(*) AS n FROM trails").fetchone()["n"]
-        return jsonify(status="ok", trails=trails)
+        # A health check that cannot fail is decoration. This one reads the database, and it
+        # treats an empty one as a failure rather than as a region with no trails in it. That
+        # case is not hypothetical: a load that died partway used to delete the old database and
+        # leave an empty one, and the old check answered "ok, 0 trails" to it, which is the one
+        # answer that stops anybody looking.
+        row = db().execute(
+            "SELECT (SELECT COUNT(*) FROM trails) AS trails, "
+            "(SELECT COUNT(*) FROM stations) AS stations, "
+            "(SELECT COUNT(*) FROM readings) AS readings, "
+            "(SELECT MAX(date) FROM readings) AS latest_reading"
+        ).fetchone()
+        counts = {name: row[name] for name in ("trails", "stations", "readings", "latest_reading")}
+        if not counts["trails"]:
+            return jsonify(status="empty", error=missing_db(), **counts), 503
+        return jsonify(status="ok", **counts)
 
     @app.get("/api/trails")
     def trails():

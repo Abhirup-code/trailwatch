@@ -266,3 +266,39 @@ def test_a_trail_names_the_station_its_rating_came_from(client):
     for trail in client.get("/api/trails").get_json():
         assert trail["station_id"]
         assert trail["station_name"]
+
+
+def _empty_database(path):
+    """A database with the right tables and nothing in them, which is what a dead load left."""
+    import sqlite3
+
+    from trailwatch.pipeline import SCHEMA
+
+    con = sqlite3.connect(path)
+    con.executescript(SCHEMA)
+    con.commit()
+    con.close()
+    return path
+
+
+def test_health_calls_an_empty_database_a_failure(tmp_path):
+    db = _empty_database(tmp_path / "empty.db")
+    from trailwatch.api import create_app
+
+    response = create_app(str(db)).test_client().get("/api/health")
+    assert response.status_code == 503
+    body = response.get_json()
+    assert body["status"] == "empty"
+    assert body["trails"] == 0
+    assert "trailwatch.pipeline" in body["error"], "it should say how to build one"
+
+
+def test_health_reports_what_it_can_see(client):
+    body = client.get("/api/health").get_json()
+    assert body["status"] == "ok"
+    assert body["trails"] > 0 and body["stations"] > 0 and body["readings"] > 0
+    assert body["latest_reading"] is not None
+
+
+def test_a_loaded_database_is_not_called_empty(client):
+    assert client.get("/api/health").status_code == 200
