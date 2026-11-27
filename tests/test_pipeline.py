@@ -1,3 +1,5 @@
+import sqlite3
+
 import pytest
 
 from trailwatch import pipeline as pipeline_mod
@@ -361,3 +363,43 @@ def test_a_duplicate_row_never_touches_the_existing_database(tmp_path):
     with pytest.raises(pipeline_mod.DataError):
         run(data, db)
     assert db.read_bytes() == before
+
+
+def test_a_failure_during_the_load_keeps_the_previous_database(tmp_path, monkeypatch):
+    # The header and key checks run before anything is written, so the only way to reach the
+    # load and then fail is for the load itself to go wrong. Simulated here, because the point
+    # is that an unforeseen failure is survivable too.
+    data = _tiny_dataset(tmp_path / "data", HEADER)
+    db = tmp_path / "atomic.db"
+    run(data, db)
+    before = db.read_bytes()
+
+    def explode(*_args, **_kwargs):
+        raise sqlite3.IntegrityError("something nobody predicted")
+
+    monkeypatch.setattr(pipeline_mod, "_load", explode)
+    with pytest.raises(sqlite3.IntegrityError):
+        run(data, db)
+
+    assert db.read_bytes() == before, "a failed load must not replace a working database"
+    assert not (tmp_path / "atomic.db.building").exists(), "the half-built file must be cleaned up"
+
+
+def test_a_successful_run_leaves_no_temporary_file(tmp_path):
+    data = _tiny_dataset(tmp_path / "data", HEADER)
+    db = tmp_path / "clean.db"
+    run(data, db)
+    assert db.exists()
+    assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".building")] == []
+
+
+def test_a_rebuild_replaces_the_old_contents(tmp_path):
+    data = _tiny_dataset(tmp_path / "data", HEADER)
+    db = tmp_path / "swap.db"
+    assert run(data, db)["trails"] == 1
+
+    (data / "trails.csv").write_text(HEADER + "T2,Creek,North,S1\n")
+    assert run(data, db)["trails"] == 2
+    con = sqlite3.connect(db)
+    assert con.execute("SELECT COUNT(*) FROM trails").fetchone()[0] == 2
+    con.close()

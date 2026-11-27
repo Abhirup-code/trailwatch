@@ -174,13 +174,24 @@ def run(data_dir="data", db_path="trailwatch.db"):
     _unique(data / "trails.csv", trails, ("trail_id",))
     _unique(data / "trail_points.csv", points, ("trail_id", "seq"))
 
-    if db.exists():
-        db.unlink()
-    con = sqlite3.connect(db)
+    # Build into a temporary file beside the target and move it into place only once the load has
+    # finished. Deleting first meant any failure during the load, expected or not, left no working
+    # database and an empty one in its place, which reads as a database with no trails in it
+    # rather than as a failed run. The move is atomic within a directory, so a reader either sees
+    # the previous database or the new one, never a half-written file.
+    work = db.with_name(db.name + ".building")
+    work.unlink(missing_ok=True)
     try:
-        return _load(con, stations, trails, points, readings)
-    finally:
-        con.close()
+        con = sqlite3.connect(work)
+        try:
+            summary = _load(con, stations, trails, points, readings)
+        finally:
+            con.close()
+    except BaseException:
+        work.unlink(missing_ok=True)
+        raise
+    work.replace(db)
+    return summary
 
 
 def _load(con, stations, trails, points, readings):
