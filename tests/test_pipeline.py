@@ -309,3 +309,55 @@ def test_the_committed_sample_data_passes_every_check():
     repo = Path(__file__).resolve().parents[1]
     with tempfile.TemporaryDirectory() as tmp:
         assert run(repo / "data", Path(tmp) / "sample.db")["trails"] > 0
+
+
+def test_a_trail_listed_twice_is_named(tmp_path):
+    data = _tiny_dataset(tmp_path / "data", HEADER + "T1,Ridge,North,S1\n")
+    with pytest.raises(pipeline_mod.DataError) as caught:
+        run(data, tmp_path / "dup1.db")
+    message = str(caught.value)
+    assert "trails.csv line 3" in message
+    assert "trail_id='T1' appears twice" in message
+
+
+def test_a_station_listed_twice_is_named(tmp_path):
+    data = _tiny_dataset(tmp_path / "data", HEADER)
+    (data / "stations.csv").write_text(
+        "station_id,name,lat,lon\nS1,Alpha,40.1,-111.1\nS1,Alpha again,40.2,-111.2\n"
+    )
+    with pytest.raises(pipeline_mod.DataError) as caught:
+        run(data, tmp_path / "dup2.db")
+    assert "station_id='S1' appears twice" in str(caught.value)
+
+
+def test_a_repeated_point_in_one_trail_is_named(tmp_path):
+    data = _tiny_dataset(tmp_path / "data", HEADER)
+    (data / "trail_points.csv").write_text(
+        "trail_id,seq,lat,lon,elev_m\nT1,1,40.1,-111.1,2000\nT1,1,40.2,-111.2,2100\n"
+    )
+    with pytest.raises(pipeline_mod.DataError) as caught:
+        run(data, tmp_path / "dup3.db")
+    assert "trail_id='T1', seq=1 appears twice" in str(caught.value)
+
+
+def test_the_same_sequence_number_under_another_trail_is_fine(tmp_path):
+    # seq counts within a trail, so every trail starts again at 1. Only the pair has to be unique.
+    data = _tiny_dataset(tmp_path / "data", HEADER + "T2,Creek,North,S1\n")
+    (data / "trail_points.csv").write_text(
+        "trail_id,seq,lat,lon,elev_m\n"
+        "T1,1,40.1,-111.1,2000\nT1,2,40.2,-111.2,2100\n"
+        "T2,1,40.3,-111.3,2200\nT2,2,40.4,-111.4,2300\n"
+    )
+    assert run(data, tmp_path / "dup4.db")["points"] == 4
+
+
+def test_a_duplicate_row_never_touches_the_existing_database(tmp_path):
+    data = _tiny_dataset(tmp_path / "data", HEADER)
+    db = tmp_path / "survives.db"
+    run(data, db)
+    before = db.read_bytes()
+
+    (data / "trails.csv").write_text(HEADER + "T1,Ridge,North,S1\n")
+    with pytest.raises(pipeline_mod.DataError):
+        run(data, db)
+    assert db.read_bytes() == before

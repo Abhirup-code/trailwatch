@@ -137,6 +137,25 @@ def _read(path):
     return _numbers(path, rows)
 
 
+def _unique(path, rows, columns):
+    """Fail on a repeated key, naming it, rather than letting SQLite raise from inside the load.
+
+    A row pasted twice is the commonest way a hand-edited CSV goes wrong, and the PRIMARY KEY
+    declarations catch it either way. The difference is what the person sees: sqlite3 raises
+    IntegrityError naming a constraint, which says nothing about which file or line to look at.
+    """
+    seen = set()
+    for line, row in enumerate(rows, start=2):  # line 1 is the header
+        key = tuple(row[column] for column in columns)
+        if key in seen:
+            shown = ", ".join(f"{column}={row[column]!r}" for column in columns)
+            raise DataError(
+                f"{path} line {line}: {shown} appears twice. "
+                f"Each {' and '.join(columns)} may appear only once in this file."
+            )
+        seen.add(key)
+
+
 def run(data_dir="data", db_path="trailwatch.db"):
     data = Path(data_dir)
     db = Path(db_path)
@@ -148,6 +167,12 @@ def run(data_dir="data", db_path="trailwatch.db"):
     trails = _read(data / "trails.csv")
     points = _read(data / "trail_points.csv")
     readings = _read(data / "readings.csv")
+
+    # Readings are deliberately not checked here: a repeated reading is a row-level problem with
+    # a reason and a place in rejected_readings, not a reason to abandon the whole load.
+    _unique(data / "stations.csv", stations, ("station_id",))
+    _unique(data / "trails.csv", trails, ("trail_id",))
+    _unique(data / "trail_points.csv", points, ("trail_id", "seq"))
 
     if db.exists():
         db.unlink()
