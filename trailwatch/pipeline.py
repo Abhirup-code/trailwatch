@@ -72,6 +72,32 @@ REQUIRED_COLUMNS = {
 }
 
 
+# Columns that have to hold a number. SQLite's type affinity stores a non-numeric string in a
+# REAL column as text and says nothing about it, so a latitude written "N47.1" loaded cleanly and
+# then failed inside math.radians on the first request that measured the trail. That is a 500 for
+# the whole trail list rather than for the one trail, and nothing in the error names the file or
+# the cell. Checking here turns it into a message that does.
+NUMERIC_COLUMNS = {
+    "stations.csv": {"lat": float, "lon": float},
+    "trail_points.csv": {"seq": int, "lat": float, "lon": float, "elev_m": float},
+}
+
+
+def _numbers(path, rows):
+    """Convert the numeric columns of one file in place, or name the cell that is not a number."""
+    wanted = NUMERIC_COLUMNS.get(path.name, {})
+    for line, row in enumerate(rows, start=2):  # line 1 is the header
+        for column, kind in wanted.items():
+            try:
+                row[column] = kind(row[column])
+            except (TypeError, ValueError):
+                want = "whole number" if kind is int else "number"
+                raise DataError(
+                    f"{path} line {line}: {column} is {row[column]!r}, which is not a {want}."
+                ) from None
+    return rows
+
+
 def _read(path):
     # utf-8-sig, not the platform default. Excel and Google Sheets write a byte order mark at the
     # start of a UTF-8 CSV, and csv.DictReader then reads the first column's name as "\ufefftrail_id",
@@ -94,7 +120,7 @@ def _read(path):
             f"{path} has no column named {', '.join(missing)}. "
             f"Its header is: {', '.join(header) if header else '(the file is empty)'}"
         )
-    return rows
+    return _numbers(path, rows)
 
 
 def run(data_dir="data", db_path="trailwatch.db"):

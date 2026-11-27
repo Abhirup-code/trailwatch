@@ -224,3 +224,47 @@ def test_a_failed_load_leaves_no_half_built_database(tmp_path):
     with pytest.raises(pipeline_mod.DataError):
         run(data, db)
     assert not db.exists()
+
+
+def test_a_latitude_that_is_not_a_number_is_named_with_its_line(tmp_path):
+    data = _tiny_dataset(tmp_path / "data", HEADER)
+    (data / "trail_points.csv").write_text(
+        "trail_id,seq,lat,lon,elev_m\nT1,1,40.1,-111.1,2000\nT1,2,N47.1,-111.2,2100\n"
+    )
+    with pytest.raises(pipeline_mod.DataError) as caught:
+        run(data, tmp_path / "num1.db")
+    message = str(caught.value)
+    assert "trail_points.csv line 3" in message
+    assert "lat is 'N47.1'" in message
+
+
+def test_a_sequence_number_that_is_not_whole_is_rejected(tmp_path):
+    data = _tiny_dataset(tmp_path / "data", HEADER)
+    (data / "trail_points.csv").write_text(
+        "trail_id,seq,lat,lon,elev_m\nT1,one,40.1,-111.1,2000\nT1,2,40.2,-111.2,2100\n"
+    )
+    with pytest.raises(pipeline_mod.DataError) as caught:
+        run(data, tmp_path / "num2.db")
+    assert "seq is 'one', which is not a whole number" in str(caught.value)
+
+
+def test_a_station_coordinate_that_is_not_a_number_is_rejected(tmp_path):
+    data = _tiny_dataset(tmp_path / "data", HEADER)
+    (data / "stations.csv").write_text("station_id,name,lat,lon\nS1,Alpha,40.1,west\n")
+    with pytest.raises(pipeline_mod.DataError) as caught:
+        run(data, tmp_path / "num3.db")
+    assert "stations.csv line 2" in str(caught.value)
+
+
+def test_coordinates_are_stored_as_numbers_not_text(tmp_path):
+    # The point of the check above: what reaches the database has to be arithmetic-ready, because
+    # the API does trigonometry on it long after the loader has finished.
+    import sqlite3
+
+    data = _tiny_dataset(tmp_path / "data", HEADER)
+    db = tmp_path / "num4.db"
+    run(data, db)
+    con = sqlite3.connect(db)
+    lat, seq = con.execute("SELECT lat, seq FROM trail_points LIMIT 1").fetchone()
+    con.close()
+    assert isinstance(lat, float) and isinstance(seq, int)
