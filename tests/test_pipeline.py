@@ -403,3 +403,36 @@ def test_a_rebuild_replaces_the_old_contents(tmp_path):
     con = sqlite3.connect(db)
     assert con.execute("SELECT COUNT(*) FROM trails").fetchone()[0] == 2
     con.close()
+
+
+def test_the_summary_breaks_the_rejections_down_by_reason(built):
+    _, summary = built
+    by_reason = summary["rejections_by_reason"]
+    assert by_reason, "a rejection count with no breakdown says nothing about the cause"
+    assert "unknown station" in by_reason
+    assert "duplicate" in by_reason
+    assert "date in the future" in by_reason
+    # Every rejected row contributes at least one reason, and a row that failed twice adds two.
+    assert sum(by_reason.values()) >= summary["readings_rejected"]
+
+
+def test_one_row_failing_twice_is_counted_under_both_reasons(tmp_path):
+    data = _tiny_dataset(tmp_path / "data", HEADER)
+    (data / "readings.csv").write_text(
+        "station_id,date,temp_c,snow_depth_cm,wind_kph,precip_mm\n"
+        "NOPE,2026-01-02,999,20,10,0\n"
+    )
+    summary = run(data, tmp_path / "why.db")
+    assert summary["readings_rejected"] == 1
+    assert summary["rejections_by_reason"] == {"unknown station": 1, "temp_c out of range": 1}
+
+
+def test_clean_readings_produce_an_empty_breakdown(tmp_path):
+    data = _tiny_dataset(tmp_path / "data", HEADER)
+    (data / "readings.csv").write_text(
+        "station_id,date,temp_c,snow_depth_cm,wind_kph,precip_mm\n"
+        "S1,2026-01-02,-3,20,10,0\n"
+    )
+    summary = run(data, tmp_path / "ok.db")
+    assert summary["readings_rejected"] == 0
+    assert summary["rejections_by_reason"] == {}

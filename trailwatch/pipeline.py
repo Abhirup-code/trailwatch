@@ -213,6 +213,11 @@ def _load(con, stations, trails, points, readings):
     counts = Counter(p["trail_id"] for p in points)
     stubs = sorted(t["trail_id"] for t in trails if counts[t["trail_id"]] < 2)
     loaded = rejected = 0
+    # One number tells you something is wrong with the input and nothing about what. Forty rows
+    # rejected for "unknown station" is one wrong id in one column; forty spread across six
+    # reasons is a different morning's work. The reasons are counted individually, so a row that
+    # failed twice is counted under both.
+    reasons = Counter()
     seen = set()
     for row in readings:
         errors = validate_reading(row, station_ids)
@@ -222,6 +227,7 @@ def _load(con, stations, trails, points, readings):
         if errors:
             con.execute("INSERT INTO rejected_readings VALUES(?,?)",
                         ("; ".join(errors), str(row)))
+            reasons.update(errors)
             rejected += 1
             continue
         seen.add(key)
@@ -233,6 +239,7 @@ def _load(con, stations, trails, points, readings):
     con.commit()
     return {"trails": len(trails), "points": len(points), "stations": len(stations),
             "readings_loaded": loaded, "readings_rejected": rejected,
+            "rejections_by_reason": dict(reasons.most_common()),
             "trails_without_a_station": orphans, "trails_without_a_line": stubs}
 
 
