@@ -2,6 +2,7 @@
 import datetime as dt
 import sqlite3
 import sys
+from collections import Counter
 
 from flask import Flask, g, jsonify
 
@@ -11,6 +12,7 @@ from .scoring import MAX_AGE_DAYS, score_conditions
 
 RECENT_DAYS = 4  # how many of the newest readings the score looks at
 MIN_TRAIL_POINTS = 2  # a GeoJSON LineString needs two positions
+REJECT_SAMPLE = 100  # /api/rejects is for diagnosis, not for exporting the whole pile
 
 
 class DatabaseUnavailable(RuntimeError):
@@ -259,6 +261,27 @@ def create_app(db_path="trailwatch.db"):
                 "reporting": age is not None and age <= MAX_AGE_DAYS,
             })
         return jsonify(out)
+
+    @app.get("/api/rejects")
+    def rejects():
+        """The readings the loader threw away, and why.
+
+        rejected_readings has been written since the first version of the pipeline and nothing
+        has ever read it, so the only durable record of what was wrong with the input sat in a
+        table no endpoint exposed. The run summary prints the counts once, into a terminal that
+        is closed by the time anyone wonders why a station looks quiet; this outlives it.
+        """
+        rows = db().execute("SELECT reason, raw FROM rejected_readings").fetchall()
+        counts = Counter()
+        for row in rows:
+            # Stored joined, counted apart, so one row rejected twice shows under both reasons.
+            counts.update(row["reason"].split("; "))
+        return jsonify({
+            "total": len(rows),
+            "by_reason": dict(counts.most_common()),
+            "showing": min(len(rows), REJECT_SAMPLE),
+            "rejected": [{"reason": r["reason"], "raw": r["raw"]} for r in rows[:REJECT_SAMPLE]],
+        })
 
     @app.get("/api/trails.geojson")
     def trails_geojson():
