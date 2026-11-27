@@ -268,3 +268,44 @@ def test_coordinates_are_stored_as_numbers_not_text(tmp_path):
     lat, seq = con.execute("SELECT lat, seq FROM trail_points LIMIT 1").fetchone()
     con.close()
     assert isinstance(lat, float) and isinstance(seq, int)
+
+
+def test_a_swapped_lat_and_lon_is_rejected(tmp_path):
+    # 40.1,-111.1 written the wrong way round. Both halves are numbers, so only the range check
+    # catches it, and without that the trail is drawn off the west coast of Africa.
+    data = _tiny_dataset(tmp_path / "data", HEADER)
+    (data / "trail_points.csv").write_text(
+        "trail_id,seq,lat,lon,elev_m\nT1,1,40.1,-111.1,2000\nT1,2,-111.2,40.2,2100\n"
+    )
+    with pytest.raises(pipeline_mod.DataError) as caught:
+        run(data, tmp_path / "range1.db")
+    message = str(caught.value)
+    assert "trail_points.csv line 3" in message
+    assert "outside the range -90.0 to 90.0" in message
+    assert "wrong way round" in message
+
+
+def test_a_station_outside_the_world_is_rejected(tmp_path):
+    data = _tiny_dataset(tmp_path / "data", HEADER)
+    (data / "stations.csv").write_text("station_id,name,lat,lon\nS1,Alpha,40.1,-999\n")
+    with pytest.raises(pipeline_mod.DataError) as caught:
+        run(data, tmp_path / "range2.db")
+    assert "outside the range -180.0 to 180.0" in str(caught.value)
+
+
+def test_the_edges_of_the_world_are_still_valid(tmp_path):
+    data = _tiny_dataset(tmp_path / "data", HEADER)
+    (data / "trail_points.csv").write_text(
+        "trail_id,seq,lat,lon,elev_m\nT1,1,-90,-180,0\nT1,2,90,180,0\n"
+    )
+    assert run(data, tmp_path / "range3.db")["points"] == 2
+
+
+def test_the_committed_sample_data_passes_every_check():
+    # The checks are worth nothing if the data shipped with the project cannot survive them.
+    import tempfile
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[1]
+    with tempfile.TemporaryDirectory() as tmp:
+        assert run(repo / "data", Path(tmp) / "sample.db")["trails"] > 0

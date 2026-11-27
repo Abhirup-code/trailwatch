@@ -83,8 +83,15 @@ NUMERIC_COLUMNS = {
 }
 
 
+# Being a number is not enough for a coordinate. The usual way to break one is to write the pair
+# the wrong way round, and a longitude sitting in the latitude column is a perfectly good number,
+# so the conversion above waves it through. Nothing then fails: the trail is simply drawn in the
+# wrong hemisphere, and a map that is quietly wrong is worse than one that refuses to load.
+COORDINATE_LIMITS = {"lat": (-90.0, 90.0), "lon": (-180.0, 180.0)}
+
+
 def _numbers(path, rows):
-    """Convert the numeric columns of one file in place, or name the cell that is not a number."""
+    """Convert the numeric columns of one file in place, or name the cell that is wrong."""
     wanted = NUMERIC_COLUMNS.get(path.name, {})
     for line, row in enumerate(rows, start=2):  # line 1 is the header
         for column, kind in wanted.items():
@@ -95,6 +102,13 @@ def _numbers(path, rows):
                 raise DataError(
                     f"{path} line {line}: {column} is {row[column]!r}, which is not a {want}."
                 ) from None
+            limits = COORDINATE_LIMITS.get(column)
+            if limits and not limits[0] <= row[column] <= limits[1]:
+                raise DataError(
+                    f"{path} line {line}: {column} is {row[column]}, outside the range "
+                    f"{limits[0]} to {limits[1]}. A lat and lon written the wrong way round "
+                    f"is the usual cause."
+                )
     return rows
 
 
