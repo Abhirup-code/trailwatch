@@ -16,8 +16,8 @@ def day(temp=0, snow=30, wind=10, precip=0, date=TODAY):
     }
 
 
-def score(readings):
-    return score_conditions(readings, today=TODAY)
+def score(readings, today=TODAY):
+    return score_conditions(readings, today=today)
 
 
 def test_calm_day_is_good():
@@ -33,7 +33,14 @@ def test_strong_wind_and_cold_is_poor_or_fair():
 
 
 def test_rapid_snow_accumulation_flagged():
-    r = score([day(snow=90), day(snow=70), day(snow=50), day(snow=40)])
+    # Four consecutive days, newest first. These used to carry the same date, which readings
+    # from one station cannot: the readings table is keyed on (station_id, date).
+    r = score([
+        day(snow=90, date=TODAY),
+        day(snow=70, date=TODAY - dt.timedelta(days=1)),
+        day(snow=50, date=TODAY - dt.timedelta(days=2)),
+        day(snow=40, date=TODAY - dt.timedelta(days=3)),
+    ])
     assert "rapid recent snow accumulation" in r["reasons"]
 
 
@@ -77,3 +84,34 @@ def test_a_reading_with_an_unusable_date_is_no_data():
 def test_staleness_is_measured_against_the_real_today_by_default():
     fresh = score_conditions([day(date=today_utc())])
     assert fresh["rating"] == "Good" and fresh["age_days"] == 0
+
+
+def _reading(day, depth):
+    return {"date": day, "temp_c": 0, "snow_depth_cm": depth, "wind_kph": 0, "precip_mm": 0}
+
+
+def test_a_winters_snowpack_is_not_rapid_accumulation():
+    # The station reported on 1 January and then not again until 1 March. 160 cm did arrive,
+    # over three months, which is a normal winter and not a reason to downgrade the trail.
+    today = dt.date(2026, 3, 1)
+    result = score([_reading("2026-03-01", 180), _reading("2026-01-01", 20)], today=today)
+    assert "rapid recent snow accumulation" not in result["reasons"]
+    assert result["score"] == 100
+
+
+def test_the_same_depth_change_over_two_days_still_counts():
+    today = dt.date(2026, 3, 1)
+    result = score([_reading("2026-03-01", 180), _reading("2026-02-27", 20)], today=today)
+    assert "rapid recent snow accumulation" in result["reasons"]
+
+
+def test_a_reading_with_no_date_is_not_assumed_adjacent():
+    today = dt.date(2026, 3, 1)
+    undated = {"date": "", "temp_c": 0, "snow_depth_cm": 20, "wind_kph": 0, "precip_mm": 0}
+    result = score([_reading("2026-03-01", 180), undated], today=today)
+    assert "rapid recent snow accumulation" not in result["reasons"]
+
+
+def test_a_single_reading_reports_no_accumulation():
+    today = dt.date(2026, 3, 1)
+    assert score([_reading("2026-03-01", 180)], today=today)["score"] == 100

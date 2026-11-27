@@ -8,12 +8,38 @@ from .clock import today as today_utc
 # whenever the station last reported.
 MAX_AGE_DAYS = 3
 
+# A change in snow depth only means "recent accumulation" if the two readings bracketing it are
+# close together. What the API passes is the newest few readings, which is not the same as the
+# last few days: a station that reported in January and then went quiet until March hands over
+# two readings three months apart, and comparing those called an entire winter's snowpack a
+# rapid accumulation, with the same wording and the same penalty as 160 cm falling overnight.
+SNOW_WINDOW_DAYS = 4
+
 
 def _reading_date(reading):
     try:
         return dt.date.fromisoformat(reading.get("date", ""))
     except (TypeError, ValueError):
         return None
+
+
+def _recent_accumulation(recent, as_of):
+    """Depth gained since the oldest reading still close enough to the newest one to count.
+
+    Readings with no usable date are skipped rather than assumed adjacent, and a window holding
+    nothing but the newest reading yields no accumulation at all, which is the honest answer:
+    one depth measurement says how much snow is lying, not how fast it arrived.
+    """
+    earliest_day = earliest = None
+    for reading in recent[1:]:
+        day = _reading_date(reading)
+        if day is None or (as_of - day).days > SNOW_WINDOW_DAYS:
+            continue
+        if earliest_day is None or day < earliest_day:
+            earliest_day, earliest = day, reading
+    if earliest is None:
+        return 0
+    return recent[0]["snow_depth_cm"] - earliest["snow_depth_cm"]
 
 
 def score_conditions(recent, today=None):
@@ -66,7 +92,7 @@ def score_conditions(recent, today=None):
         score -= 8
         reasons.append("light precipitation")
 
-    gain = cur["snow_depth_cm"] - recent[-1]["snow_depth_cm"] if len(recent) > 1 else 0
+    gain = _recent_accumulation(recent, as_of)
     if gain > 30:
         score -= 15
         reasons.append("rapid recent snow accumulation")

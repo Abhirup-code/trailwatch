@@ -266,3 +266,73 @@ def test_a_trail_names_the_station_its_rating_came_from(client):
     for trail in client.get("/api/trails").get_json():
         assert trail["station_id"]
         assert trail["station_name"]
+
+
+def _empty_database(path):
+    """A database with the right tables and nothing in them, which is what a dead load left."""
+    import sqlite3
+
+    from trailwatch.pipeline import SCHEMA
+
+    con = sqlite3.connect(path)
+    con.executescript(SCHEMA)
+    con.commit()
+    con.close()
+    return path
+
+
+def test_health_calls_an_empty_database_a_failure(tmp_path):
+    db = _empty_database(tmp_path / "empty.db")
+    from trailwatch.api import create_app
+
+    response = create_app(str(db)).test_client().get("/api/health")
+    assert response.status_code == 503
+    body = response.get_json()
+    assert body["status"] == "empty"
+    assert body["trails"] == 0
+    assert "trailwatch.pipeline" in body["error"], "it should say how to build one"
+
+
+def test_health_reports_what_it_can_see(client):
+    body = client.get("/api/health").get_json()
+    assert body["status"] == "ok"
+    assert body["trails"] > 0 and body["stations"] > 0 and body["readings"] > 0
+    assert body["latest_reading"] is not None
+
+
+def test_a_loaded_database_is_not_called_empty(client):
+    assert client.get("/api/health").status_code == 200
+
+
+def test_rejects_reports_what_the_loader_threw_away(client, built):
+    _, summary = built
+    body = client.get("/api/rejects").get_json()
+    assert body["total"] == summary["readings_rejected"]
+    assert body["by_reason"] == summary["rejections_by_reason"]
+
+
+def test_every_reject_carries_its_reason_and_the_row(client):
+    body = client.get("/api/rejects").get_json()
+    assert body["rejected"], "the generated data is seeded with bad rows on purpose"
+    for entry in body["rejected"]:
+        assert entry["reason"] and entry["raw"]
+
+
+def test_rejects_is_empty_rather_than_absent_on_clean_data(tmp_path):
+    from trailwatch.api import create_app
+    from trailwatch.pipeline import run
+
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "trails.csv").write_text("trail_id,name,region,station_id\nT1,Ridge,North,S1\n")
+    (data / "stations.csv").write_text("station_id,name,lat,lon\nS1,Alpha,40.1,-111.1\n")
+    (data / "trail_points.csv").write_text(
+        "trail_id,seq,lat,lon,elev_m\nT1,1,40.1,-111.1,2000\nT1,2,40.2,-111.2,2100\n"
+    )
+    (data / "readings.csv").write_text(
+        "station_id,date,temp_c,snow_depth_cm,wind_kph,precip_mm\nS1,2026-01-02,-3,20,10,0\n"
+    )
+    db = tmp_path / "clean.db"
+    run(data, db)
+    body = create_app(str(db)).test_client().get("/api/rejects").get_json()
+    assert body == {"total": 0, "by_reason": {}, "showing": 0, "rejected": []}

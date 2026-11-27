@@ -72,6 +72,46 @@ REQUIRED_COLUMNS = {
 }
 
 
+# Columns that have to hold a number. SQLite's type affinity stores a non-numeric string in a
+# REAL column as text and says nothing about it, so a latitude written "N47.1" loaded cleanly and
+# then failed inside math.radians on the first request that measured the trail. That is a 500 for
+# the whole trail list rather than for the one trail, and nothing in the error names the file or
+# the cell. Checking here turns it into a message that does.
+NUMERIC_COLUMNS = {
+    "stations.csv": {"lat": float, "lon": float},
+    "trail_points.csv": {"seq": int, "lat": float, "lon": float, "elev_m": float},
+}
+
+
+# Being a number is not enough for a coordinate. The usual way to break one is to write the pair
+# the wrong way round, and a longitude sitting in the latitude column is a perfectly good number,
+# so the conversion above waves it through. Nothing then fails: the trail is simply drawn in the
+# wrong hemisphere, and a map that is quietly wrong is worse than one that refuses to load.
+COORDINATE_LIMITS = {"lat": (-90.0, 90.0), "lon": (-180.0, 180.0)}
+
+
+def _numbers(path, rows):
+    """Convert the numeric columns of one file in place, or name the cell that is wrong."""
+    wanted = NUMERIC_COLUMNS.get(path.name, {})
+    for line, row in enumerate(rows, start=2):  # line 1 is the header
+        for column, kind in wanted.items():
+            try:
+                row[column] = kind(row[column])
+            except (TypeError, ValueError):
+                want = "whole number" if kind is int else "number"
+                raise DataError(
+                    f"{path} line {line}: {column} is {row[column]!r}, which is not a {want}."
+                ) from None
+            limits = COORDINATE_LIMITS.get(column)
+            if limits and not limits[0] <= row[column] <= limits[1]:
+                raise DataError(
+                    f"{path} line {line}: {column} is {row[column]}, outside the range "
+                    f"{limits[0]} to {limits[1]}. A lat and lon written the wrong way round "
+                    f"is the usual cause."
+                )
+    return rows
+
+
 def _read(path):
     # utf-8-sig, not the platform default. Excel and Google Sheets write a byte order mark at the
     # start of a UTF-8 CSV, and csv.DictReader then reads the first column's name as "\ufefftrail_id",
@@ -94,7 +134,26 @@ def _read(path):
             f"{path} has no column named {', '.join(missing)}. "
             f"Its header is: {', '.join(header) if header else '(the file is empty)'}"
         )
-    return rows
+    return _numbers(path, rows)
+
+
+def _unique(path, rows, columns):
+    """Fail on a repeated key, naming it, rather than letting SQLite raise from inside the load.
+
+    A row pasted twice is the commonest way a hand-edited CSV goes wrong, and the PRIMARY KEY
+    declarations catch it either way. The difference is what the person sees: sqlite3 raises
+    IntegrityError naming a constraint, which says nothing about which file or line to look at.
+    """
+    seen = set()
+    for line, row in enumerate(rows, start=2):  # line 1 is the header
+        key = tuple(row[column] for column in columns)
+        if key in seen:
+            shown = ", ".join(f"{column}={row[column]!r}" for column in columns)
+            raise DataError(
+                f"{path} line {line}: {shown} appears twice. "
+                f"Each {' and '.join(columns)} may appear only once in this file."
+            )
+        seen.add(key)
 
 
 def run(data_dir="data", db_path="trailwatch.db"):
@@ -109,13 +168,30 @@ def run(data_dir="data", db_path="trailwatch.db"):
     points = _read(data / "trail_points.csv")
     readings = _read(data / "readings.csv")
 
-    if db.exists():
-        db.unlink()
-    con = sqlite3.connect(db)
+    # Readings are deliberately not checked here: a repeated reading is a row-level problem with
+    # a reason and a place in rejected_readings, not a reason to abandon the whole load.
+    _unique(data / "stations.csv", stations, ("station_id",))
+    _unique(data / "trails.csv", trails, ("trail_id",))
+    _unique(data / "trail_points.csv", points, ("trail_id", "seq"))
+
+    # Build into a temporary file beside the target and move it into place only once the load has
+    # finished. Deleting first meant any failure during the load, expected or not, left no working
+    # database and an empty one in its place, which reads as a database with no trails in it
+    # rather than as a failed run. The move is atomic within a directory, so a reader either sees
+    # the previous database or the new one, never a half-written file.
+    work = db.with_name(db.name + ".building")
+    work.unlink(missing_ok=True)
     try:
-        return _load(con, stations, trails, points, readings)
-    finally:
-        con.close()
+        con = sqlite3.connect(work)
+        try:
+            summary = _load(con, stations, trails, points, readings)
+        finally:
+            con.close()
+    except BaseException:
+        work.unlink(missing_ok=True)
+        raise
+    work.replace(db)
+    return summary
 
 
 def _load(con, stations, trails, points, readings):
@@ -137,6 +213,11 @@ def _load(con, stations, trails, points, readings):
     counts = Counter(p["trail_id"] for p in points)
     stubs = sorted(t["trail_id"] for t in trails if counts[t["trail_id"]] < 2)
     loaded = rejected = 0
+    # One number tells you something is wrong with the input and nothing about what. Forty rows
+    # rejected for "unknown station" is one wrong id in one column; forty spread across six
+    # reasons is a different morning's work. The reasons are counted individually, so a row that
+    # failed twice is counted under both.
+    reasons = Counter()
     seen = set()
     for row in readings:
         errors = validate_reading(row, station_ids)
@@ -146,6 +227,7 @@ def _load(con, stations, trails, points, readings):
         if errors:
             con.execute("INSERT INTO rejected_readings VALUES(?,?)",
                         ("; ".join(errors), str(row)))
+            reasons.update(errors)
             rejected += 1
             continue
         seen.add(key)
@@ -157,6 +239,7 @@ def _load(con, stations, trails, points, readings):
     con.commit()
     return {"trails": len(trails), "points": len(points), "stations": len(stations),
             "readings_loaded": loaded, "readings_rejected": rejected,
+            "rejections_by_reason": dict(reasons.most_common()),
             "trails_without_a_station": orphans, "trails_without_a_line": stubs}
 
 
