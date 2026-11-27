@@ -4,7 +4,9 @@ on:
     branches: [main]
   pull_request:
 jobs:
-  test:
+  # Ruff is pinned to one target-version, so its answer does not change with the interpreter.
+  # Running it once keeps the matrix below about whether the code works, not about style.
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -12,7 +14,25 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -r requirements-dev.txt
-      - name: Lint
-        run: ruff check .
+      - run: ruff check .
+
+  test:
+    # pyproject says this needs 3.11 or newer, and until now CI only ever proved 3.11. A claim
+    # about every later version that nothing tests is a claim waiting to be wrong: 3.12 and 3.13
+    # have each removed things that used to work.
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      # Without this, the first version to fail cancels the others and hides whether the problem
+      # belongs to one interpreter or to all of them.
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -r requirements-dev.txt
       - name: Tests
         run: python -m pytest -q --cov=trailwatch --cov-report=term-missing --cov-fail-under=90

@@ -436,3 +436,22 @@ def test_clean_readings_produce_an_empty_breakdown(tmp_path):
     summary = run(data, tmp_path / "ok.db")
     assert summary["readings_rejected"] == 0
     assert summary["rejections_by_reason"] == {}
+
+
+def test_ci_tests_the_oldest_python_the_project_claims():
+    # pyproject, the import guard and the CI matrix are three statements of the same fact, and
+    # nothing stops them drifting apart. Parsed with a regex rather than a YAML library so the
+    # check costs no dependency.
+    import re
+    from pathlib import Path
+
+    workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/ci.yml").read_text()
+    matrix = re.search(r"python-version:\s*\[([^\]]+)\]", workflow)
+    assert matrix, "the CI workflow should test a matrix of Python versions"
+    versions = [v.strip().strip('"') for v in matrix.group(1).split(",")]
+
+    import trailwatch
+
+    oldest = ".".join(str(n) for n in trailwatch.MINIMUM_PYTHON)
+    assert versions[0] == oldest, f"CI should start at {oldest}, the version the project claims"
+    assert len(versions) > 1, "testing only the minimum proves nothing about later versions"
